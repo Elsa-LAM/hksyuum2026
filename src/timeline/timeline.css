@@ -1,0 +1,425 @@
+
+  :root{
+    --beige:#F4F1EA;
+    --beige-bottom:#E9E5DA;
+    /* v14-12 對比度優化：主文字色從偏棕的 #2B2722 加深為接近純黑的
+       #1D1D1F（沿用需求建議值），次要文字/軸線色從偏淺的 #6b6459 加深為
+       中深灰 #424242，全面提升可讀性；#8E8A86（軸線／刻度／引導線用的
+       淺灰）也一併改用 --line-ink 這個新變數統一管理，同樣調深。 */
+    --ink:#1D1D1F;
+    --ink-soft:#424242;
+    --line-ink:#424242;
+    --catA:#B85C5F; --catB:#C1A46B; --catC:#7D6A8E; --catD:#6B8E7A; --catE:#5C6E84;
+    --font-scale:1;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:#111;height:100%;overflow:hidden;font-family:'Noto Sans TC',sans-serif;color:var(--ink);}
+  #wrap{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  #stage{
+    position:relative;
+    width:3840px;
+    height:2160px;
+    flex:none;
+    background:var(--beige);
+    touch-action:none;
+    overflow:hidden;
+    box-shadow:0 40px 120px rgba(0,0,0,.5);
+    transform-origin:center center;
+    will-change:transform;
+  }
+
+  #bandTop, #bandBottom{ position:absolute; left:0; right:0; transition:background-color .55s ease; }
+  #bandTop{ top:0; height:36%; background:var(--beige); }
+  #bandBottom{ bottom:0; height:36%; background:var(--beige-bottom); }
+
+  /* 下軌固定區塊標籤：固定在下軌米黃色區域「頂部邊緣」（貼近中央分隔線），
+     與上軌標籤呈鏡面對稱；與下方時間軸主線、刻度保持安全距離 */
+  #bottomTrackLabel{
+    position:absolute; top:15px; left:25px; z-index:10;
+    margin-bottom:30px; /* 與下方時間軸主線、刻度之間的安全距離保證 ≥30px */
+    padding:7px 16px; border-radius:14px; width:fit-content;
+    background:rgba(255,255,255,.55); box-shadow:0 2px 8px rgba(0,0,0,.08);
+    font-family:'Noto Serif TC',serif; font-weight:700;
+    font-size:calc(16px * var(--font-scale)); letter-spacing:.06em;
+    color:var(--ink); pointer-events:none;
+  }
+
+  #threeHost{ position:absolute; inset:0; z-index:5; touch-action:none; }
+  #threeHost canvas{ display:block; touch-action:none; cursor:grab; }
+
+  .msLayer{ position:absolute; inset:0; z-index:6; pointer-events:none; }
+  /* v14-16 需求：連接線（.stem）改放到一個獨立的、比事件卡片層更低的圖層。
+     原因：.ms 有 transform:translate(-50%,-50%)（transform 會建立獨立的
+     stacking context），所以「卡片 z-index:1 > 連接線 z-index:0」這個規則
+     只在「同一個 .ms 內部」有效；不同事件之間，瀏覽器仍然是照 DOM 順序
+     畫，後面事件的連接線就會蓋到前面事件的卡片上（.ms.dim 的 opacity:.25
+     同樣會建立 stacking context，情況一樣）。唯一可靠的解法是把所有連接線
+     搬到自己的圖層，整層壓在所有卡片之下。
+     z-index 用 5（跟 #threeHost 相同）並排在 #threeHost 之後：連接線仍畫在
+     照片之上，但一定畫在 .msLayer（z-index:6）的卡片之下。 */
+  .msStemLayer{ z-index:5; }
+  .ms{
+    position:absolute; transform:translate(-50%,-50%);
+    pointer-events:auto; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:calc(6px * var(--font-scale));
+    transition:opacity .45s ease, transform .45s ease;
+    opacity:1;
+    font-size:calc(16px * var(--font-scale));
+    padding:0.15em 0.4em;
+    max-width: calc(168px + 48px * var(--font-scale));
+  }
+  .ms.ms-top{ flex-direction:column; }
+  .ms.ms-bottom{ flex-direction:column; }
+  /* 事件節點圖示（Icon/Dot）：尺寸與外圈光暈皆隨 --font-scale 等比例放大，
+     確保字體調整時圖示與文字比例維持一致，不會出現「字大圖小」的失衡感 */
+  .ms .dot{
+    width:calc(14px * var(--font-scale));height:calc(14px * var(--font-scale));border-radius:50%;
+    background:var(--ink); box-shadow:0 0 0 calc(6px * var(--font-scale)) rgba(255,255,255,.55);
+    transition:background .3s ease, box-shadow .3s ease, width .3s ease, height .3s ease;
+    flex:none;
+    /* 跟 .msCard 同理：給它明確的堆疊層級，確保圓點本身也不會被 .stem
+       這條定位元素的連接線蓋過。 */
+    position:relative; z-index:1;
+  }
+  /* .msCard 把卡片本體（.lbl／.yr）跟 .dot／.stem 分開包成一層，純粹是
+     DOM 結構上的分組，方便量測卡片自己的高度；v14-14 移除了「靠近邊緣時
+     額外位移卡片」的機制（會讓卡片跟著捲動位置漂移，使用者回報事件看起來
+     沒有固定在自己的年份上），現在 .msCard 永遠跟 .dot 對齊，不會有任何
+     額外的水平位移。
+     v14-16：連接線（.stem）已改由獨立的 .msStemLayer 圖層繪製、整層壓在
+     卡片圖層之下（見上方 .msStemLayer 說明），所以「連接線遮擋卡片」已在
+     圖層層級解決；這裡保留 position:relative + z-index 只是讓卡片內容在
+     .ms 內部維持穩定的堆疊順序。 */
+  .msCard{
+    display:flex; flex-direction:column; align-items:center; gap:calc(4px * var(--font-scale));
+    position:relative; z-index:1;
+  }
+  /* v14-13 需求 2：改用固定 width（不是 max-width）——卡片寬度是一個
+     寫死的常數，不會因為視窗大小或旁邊元素擠壓而變窄／變形；標題文字用
+     white-space:normal + word-break:break-word 換行，行數不夠時卡片下緣
+     自然縮短，行數不夠寬時內距留白，寬度本身永遠不變。
+     v14-15：寬度從 240px 加大到 300px——加寬後大部份標題（含較長的英文
+     標題）都能在 2~3 行內放完，不用再堆疊到 4 行以上。 */
+  .ms .lbl{
+    font-size:calc(16px * var(--font-scale)); letter-spacing:.02em; color:var(--ink);
+    background:rgba(244,241,234,.94); padding:calc(4px * var(--font-scale)) calc(10px * var(--font-scale)); border-radius:6px;
+    box-sizing:border-box;
+    white-space:normal;
+    width:calc(148px + 44px * var(--font-scale));
+    max-width:280px;
+    height:auto; line-height:1.35;
+    text-align:center; word-break:break-word; overflow-wrap:break-word;
+    display:-webkit-box;
+    -webkit-box-orient:vertical;
+    -webkit-line-clamp:2;
+    overflow:hidden;
+    box-shadow:0 2px 6px rgba(0,0,0,.08);
+    text-shadow:-1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF;
+  }
+  .ms .yr{
+    font-size:calc(15px * var(--font-scale)); color:var(--ink-soft); font-weight:600;
+    line-height:1.2;
+    text-shadow:-1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF;
+  }
+  /* .lbl 有自己的淺色底卡，維持深色文字即可確保對比 */
+  .ms.hidden{ display:none; opacity:0; pointer-events:none; transform:translate(-50%,-50%) scale(.6); }
+  .ms.dim{ opacity:.25; }
+  /* v14-12 需求 3：加強「當前選中節點」的視覺強化——原本只有放大紅點＋
+     加粗文字，這裡再加上明確的深色外框與對比色底卡，讓選中狀態一眼就能
+     辨識，不用靠旁邊比較才看得出差異。 */
+  .ms.active .dot{ width:calc(24px * var(--font-scale));height:calc(24px * var(--font-scale)); background:#c0392b; box-shadow:0 0 0 calc(8px * var(--font-scale)) rgba(192,57,43,.32); }
+  .ms.active .lbl{
+    font-weight:700; color:#fff; background:#c0392b;
+    border:calc(2px * var(--font-scale)) solid #7a2015;
+    box-shadow:0 4px 14px rgba(192,57,43,.45);
+    text-shadow:none;
+  }
+  .ms.active .yr{ color:#7a2015; font-weight:700; }
+  .ms.active{ transform:translate(-50%,-50%) translateY(calc(-8px * var(--font-scale))); }
+
+  /* ---------- 主時間軸線與連接引導線 ---------- */
+  .axisLayer{ position:absolute; left:0; right:0; height:0; z-index:6; pointer-events:none; }
+  #topAxisLayer{ top:30%; }
+  #bottomAxisLayer{ top:70%; }
+  .axisLine{ position:absolute; left:0; right:0; top:0; height:2px; background:var(--line-ink); }
+  .axisTick{
+    position:absolute; top:0; left:0;
+    transform:translateX(-50%);
+    width:0; height:0;
+    pointer-events:none;
+  }
+  .axisTickMark{
+    position:absolute; left:0; top:0;
+    transform:translate(-50%,-50%);
+    width:2px; height:28px; background:var(--line-ink);
+  }
+  .axisTickYear{
+    position:absolute; left:0;
+    transform:translateX(-50%);
+    font-size:calc(16px * var(--font-scale)); font-weight:600; color:var(--ink);
+    letter-spacing:.05em; white-space:nowrap;
+    text-shadow:-1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF;
+    background:rgba(244,241,234,.92);
+    padding:2px 8px; border-radius:8px;
+    /* Keep year numerals well clear of the axis — stage px look ~⅓ size on a laptop preview */
+    bottom: calc(44px + 30px * var(--font-scale));
+  }
+  .axisTick.axisTick-bottom .axisTickYear{
+    bottom:auto;
+    top: calc(44px + 30px * var(--font-scale));
+  }
+
+  /* 連接線本體：現在是 .msStemLayer 的直接子元素（不再是 .ms 的子元素），
+     水平位置（left）與垂直位置（top / height）都由 JS 直接寫入行內樣式，
+     計算方式與原本完全相同：由「卡片靠主軸線的那一側邊緣」延伸到主軸線。
+     下面的 hidden / dim / active 三個狀態與 .ms 的同名狀態一一對應，由
+     syncStemStates() 同步，確保篩選、淡化、選中時連接線的表現跟卡片一致。 */
+  .stem{
+    position:absolute; width:2px; background:var(--line-ink);
+    transform:translateX(-50%);
+    transition:opacity .45s ease, transform .45s ease;
+    opacity:1; pointer-events:none;
+  }
+  .stem.hidden{ display:none; }
+  .stem.dim{ opacity:.25; }
+  /* 與 .ms.active 的 translateY 位移量一致，選中時卡片與連接線一起上移，
+     兩者不會脫節。 */
+  .stem.active{ transform:translateX(-50%) translateY(calc(-8px * var(--font-scale))); }
+
+  #guideLine{
+    position:absolute; top:0; bottom:0; width:0;
+    border-left:2px dashed var(--line-ink);
+    z-index:18; pointer-events:none;
+    opacity:0; transition:opacity .25s ease;
+  }
+
+  /* 左上角標題與語系切換區塊 */
+  /* 防撞安全距離（Guard）：加上不透明底卡與 z-index，確保下方卡片／連接線
+     不論捲動到哪個年份，都絕對不會覆蓋或遮擋左上角標題文字 */
+  #headerLeft{
+    position:absolute; left:32px; top:16px; z-index:30;
+    display:flex; flex-direction:column; gap:16px;
+    padding:20px 32px 24px 24px;
+    background:rgba(244,241,234,.98);
+    box-shadow:0 8px 24px rgba(244,241,234,.85);
+    border-radius:20px;
+  }
+  
+  #langSwitch{ display:flex; gap:12px; align-items:center; }
+  /* v14-12 需求 4：langBtn 改用 em 為單位的寬高——font-size 隨 --font-scale
+     縮放，width/height 用 em 表示（2.8em），字體變大時整個圓形按鈕（含可
+     點擊範圍）會跟著等比例放大，不會維持在字體放大前的固定 56px。 */
+  .langBtn{
+    font-size:calc(20px * var(--font-scale)); font-weight:700;
+    width:2.8em; height:2.8em; border-radius:50%; border:3px solid rgba(43,39,34,.3);
+    background:#FFFFFF; color:var(--ink);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+    transition:all .25s ease; user-select:none;
+  }
+  .langBtn:hover{ background:#fff; transform:scale(1.1); }
+  .langBtn.active{ background:var(--ink); color:var(--beige); border-color:var(--ink); box-shadow:0 4px 12px rgba(0,0,0,.2); }
+
+  /* Excel 資料匯入按鈕（讀取「上軌事件／下軌事件／照片列」三個分頁） */
+  /* v14-12 需求 4：padding 改用 em（0.5em 1em），font-size 隨 --font-scale
+     縮放，字體放大時按鈕本身與可點擊範圍會一起等比例變大。 */
+  #excelImportBtn{
+    font-size:calc(14px * var(--font-scale)); font-weight:600;
+    padding:0.5em 1em; border-radius:20px; border:2px solid rgba(43,39,34,.3);
+    background:rgba(255,255,255,.6); color:var(--ink);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+    transition:all .25s ease; user-select:none; white-space:nowrap;
+  }
+  #excelImportBtn:hover{ background:#fff; }
+  #excelStatus{ font-size:13px; color:var(--ink); opacity:.85; min-height:16px; }
+
+  #title{ font-family:'Noto Serif TC',serif; }
+  #title h1{ margin:0; font-size:calc(38px * var(--font-scale)); font-weight:700; letter-spacing:.06em; color:var(--top-text-color, var(--ink));}
+  #title p{ margin:4px 0 0; font-size:calc(20px * var(--font-scale)); color:var(--top-text-color, var(--ink-soft)); letter-spacing:.1em;}
+
+  /* 上軌動態類別標籤：位於左上角標題正下方，顏色隨目前選中的分類即時變動 */
+  /* 上軌動態類別標籤：固定在上軌米黃色區域「底部邊緣」（貼近中央分隔線），
+     與下軌標籤 #bottomTrackLabel 呈鏡面對稱；位於 1971 年份刻度左側空白處，
+     不與任何年份數字、刻度線或軸線重疊 */
+  #topCatBadge{
+    position:absolute; bottom:15px; left:25px; z-index:10;
+    margin-top:30px; /* 與上方時間軸主線、刻度之間的安全距離保證 ≥30px */
+    display:none; align-items:center; gap:9px; width:fit-content;
+    padding:7px 16px; border-radius:14px;
+    background:rgba(255,255,255,.55); box-shadow:0 2px 8px rgba(0,0,0,.08);
+    font-family:'Noto Serif TC',serif; font-weight:600;
+    font-size:calc(16px * var(--font-scale)); letter-spacing:.05em;
+    pointer-events:none;
+  }
+  #topCatBadge.show{ display:flex; }
+  #topCatBadge .dot{ font-size:1.05em; line-height:1; }
+  #topCatBadge .label{ white-space:nowrap; }
+
+  /* 提示文字：不論上軌背景切換成哪個分類色，文字顏色一律固定為 --line-ink；
+     opacity 透過 JS（resetHintTimer）依「使用者是否閒置」動態切換，
+     transition 讓淡入／淡出有平滑過場。pointer-events:none 確保這段
+     純提示文字不會擋到下方畫布或背景空白區域的點擊（含清空選取功能）。
+     v14-12：原本的 #8E8A86 太淺，改用跟軸線一致的 --line-ink（#424242）
+     加深對比。 */
+  #hint{
+    position:absolute; top:32px; right:48px; z-index:20;
+    font-size:calc(21px * var(--font-scale)); color:var(--line-ink);
+    text-align:right; line-height:1.6; max-width:520px;
+    opacity:1; transition:opacity .5s ease; pointer-events:none;
+  }
+
+  /* 尚未匯入 Excel 資料時的提示層 */
+  #importHint{
+    position:absolute; inset:0; z-index:15;
+    display:flex; align-items:center; justify-content:center;
+    pointer-events:none;
+  }
+  #importHint.hidden{ display:none; }
+  .importHintInner{
+    padding:28px 44px; border-radius:20px;
+    background:rgba(244,241,234,.92); color:var(--ink);
+    font-family:'Noto Serif TC',serif; font-size:26px; font-weight:600; letter-spacing:.05em;
+    box-shadow:0 12px 32px rgba(0,0,0,.15);
+  }
+
+  #yearReadout{
+    position:absolute; right:52px; top:50%; transform:translateY(-50%);
+    z-index:15; text-align:right; pointer-events:none;
+  }
+  #yearReadout .num{
+    font-family:'Noto Serif TC',serif; font-weight:700; font-size:calc(112px * var(--font-scale));
+    color:var(--ink); line-height:1; text-shadow:0 4px 20px rgba(244,241,234,.9);
+  }
+  #yearReadout .lbl{ font-size:calc(20px * var(--font-scale)); letter-spacing:.2em; color:var(--ink-soft); margin-top:8px;}
+
+  /* v14-12 需求 5：分類選單改成直列式（column）排列，並從單字母代碼改回
+     完整類別名稱——名稱長度不一（中英文皆有可能超過一行），所以每顆
+     按鈕從「固定寬高的正圓形」改成「寬度固定、高度隨內容 auto 撐開的
+     藥丸形」，文字用 white-space:normal 讓完整名稱自然換行、不截斷
+     （呼應需求 2）。align-items:flex-end 讓藥丸右緣切齊畫面右邊界。 */
+  #catButtons{
+    position:absolute; right:48px; bottom:128px; z-index:20;
+    display:flex; flex-direction:column; align-items:flex-end;
+    gap:calc(12px * var(--font-scale));
+  }
+  .catBtn{
+    display:flex; align-items:center; gap:calc(10px * var(--font-scale));
+    width:calc(168px + 48px * var(--font-scale)); max-width:268px; box-sizing:border-box;
+    border-radius:999px; border:3px solid rgba(43,39,34,.25); cursor:pointer;
+    font-family:'Noto Serif TC',serif; font-weight:600;
+    font-size:calc(16px * var(--font-scale));
+    /* 需求 4：padding 用 em，點擊區域隨字體大小走 */
+    padding:0.55em 0.9em;
+    color:var(--ink); background:rgba(255,255,255,.72);
+    white-space:normal; line-height:1.3; text-align:left; word-break:break-word;
+    transition:transform .25s ease, box-shadow .25s ease, border-color .25s ease, background .25s ease;
+  }
+  .catBtn .catDot{
+    width:1.1em; height:1.1em; border-radius:50%; flex:none;
+    box-shadow:0 0 0 2px rgba(255,255,255,.8) inset;
+  }
+  .catBtn .catBtnLabel{ flex:1 1 auto; }
+  .catBtn:hover{ transform:translateX(-6px); background:rgba(255,255,255,.92); }
+  .catBtn.on{
+    border-color:var(--ink); box-shadow:0 8px 20px rgba(0,0,0,.25);
+    transform:translateX(-8px); background:#fff; font-weight:700;
+  }
+  .catBtn[data-c="A"] .catDot{ background:var(--catA); }
+  .catBtn[data-c="B"] .catDot{ background:var(--catB); }
+  .catBtn[data-c="C"] .catDot{ background:var(--catC); }
+  .catBtn[data-c="D"] .catDot{ background:var(--catD); }
+  .catBtn[data-c="E"] .catDot{ background:var(--catE); }
+
+  /* ---------- 左下角文字大小切換選單 ---------- */
+  #fontSizeSwitch{ position:absolute; left:48px; bottom:32px; z-index:22; display:flex; flex-direction:column-reverse; align-items:flex-start; gap:14px; }
+  /* v14-12 需求 4：min-width/height 改用 em、padding 改用 em，字體放大時
+     按鈕大小與可點擊範圍一起等比例放大。 */
+  .fontToggleBtn{
+    font-size:calc(20px * var(--font-scale)); font-weight:700;
+    min-width:3.2em; height:3.2em; padding:0 0.8em; border-radius:1.6em;
+    border:3px solid rgba(43,39,34,.3);
+    background:rgba(255,255,255,.6); color:var(--ink);
+    font-family:'Noto Serif TC',serif;
+    cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition:all .25s ease; user-select:none; white-space:nowrap;
+  }
+  .fontToggleBtn:hover{ background:#fff; transform:scale(1.08); }
+  .fontToggleBtn .aaSmall{ display:inline-flex; align-items:center; font-size:50%; line-height:1; }
+  .fontToggleBtn .aaBig{ display:inline-flex; align-items:center; font-size:100%; line-height:1; margin-left:1px; }
+  .fontSizeMenu{
+    display:flex; flex-direction:column; gap:10px;
+    max-height:0; opacity:0; pointer-events:none; overflow:hidden;
+    transition:max-height .35s ease, opacity .3s ease;
+  }
+  .fontSizeMenu.open{ max-height:320px; opacity:1; pointer-events:auto; }
+  .fontSizeOption{
+    font-size:calc(18px * var(--font-scale)); font-weight:600;
+    min-width:3.2em; padding:0.5em 1em; border-radius:20px;
+    background:rgba(255,255,255,.6); border:3px solid rgba(43,39,34,.2);
+    color:var(--ink); text-align:center;
+    cursor:pointer; white-space:nowrap; transition:all .2s ease; user-select:none;
+  }
+  .fontSizeOption:hover{ background:#fff; }
+  .fontSizeOption.active{ background:var(--ink); color:var(--beige); border-color:var(--ink); }
+
+  /* ---------- bottom global timeline bar ---------- */
+  #timelineBar{
+    position:absolute; left:50%; bottom:32px; transform:translateX(-50%);
+    width:58%; z-index:25; user-select:none;
+  }
+  #tlTrack{
+    position:relative; height:10px; border-radius:6px;
+    background:rgba(43,39,34,.18); cursor:pointer;
+  }
+  #tlFill{ position:absolute; top:0; left:0; height:100%; background:rgba(43,39,34,.4); border-radius:3px; }
+  #tlThumb{
+    position:absolute; top:50%; width:32px; height:32px; border-radius:50%;
+    background:var(--ink); box-shadow:0 4px 12px rgba(0,0,0,.35), 0 0 0 8px rgba(244,241,234,.8);
+    transform:translate(-50%,-50%); cursor:grab;
+  }
+  #tlThumb:active{ cursor:grabbing; }
+  #tlTicks{ position:relative; height:28px; margin-top:8px; }
+  /* v14-6 修補：底部拖拽列的年份標籤字級縮小（17px → 13px）並加大字距，
+     配合下面 JS 的動態稀疏化（computeTimelineTickStep）——年份數字本身
+     變窄，需要的最小可讀間距也跟著變小，兩者一起降低早期／密度較低
+     年份區段標籤擠成一團的機率；white-space:nowrap 防止數字被意外拆行。 */
+  .tlTick{ position:absolute; top:0; transform:translateX(-50%); font-size:calc(13px * var(--font-scale)); color:var(--ink-soft); letter-spacing:0.5px; white-space:nowrap; }
+
+  /* ---------- modal ---------- */
+  #modalOverlay{
+    position:absolute; inset:0; z-index:60; background:rgba(20,18,15,.35);
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none; transition:opacity .35s ease;
+  }
+  #modalOverlay.show{ opacity:1; pointer-events:auto; }
+  #modalCard{
+    width:840px; max-width:80%; max-height:86%; background:var(--beige); border-radius:12px;
+    padding:52px 56px 44px; box-shadow:0 48px 120px rgba(0,0,0,.4);
+    transform:translateY(32px) scale(.96); transition:transform .35s cubic-bezier(.2,.8,.2,1);
+    position:relative; overflow-y:auto; box-sizing:border-box;
+  }
+  #modalOverlay.show #modalCard{ transform:translateY(0) scale(1); }
+  #modalCard img{ width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:8px; margin-bottom:28px; display:block;}
+  #modalCard .myear{ font-size:calc(22px * var(--font-scale)); letter-spacing:.15em; color:var(--ink-soft); margin-bottom:8px;}
+  #modalCard h2{ font-family:'Noto Serif TC',serif; font-size:calc(38px * var(--font-scale)); margin:0 0 16px; line-height:1.4; word-break:break-word;}
+  #modalCard p{ font-size:calc(25px * var(--font-scale)); line-height:1.75; color:#2A2A2A; margin:0; word-break:break-word;}
+  #modalClose{ position:absolute; top:20px; right:24px; background:none; border:none; font-size:36px; cursor:pointer; color:var(--ink-soft); width:52px; height:52px; line-height:1; }
+
+  /* ---------- 上/下時間線事件詳情彈窗（第二次點擊節點觸發） ---------- */
+  #eventModalOverlay{
+    position:absolute; inset:0; z-index:60; background:rgba(20,18,15,.35);
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none; transition:opacity .35s ease;
+  }
+  #eventModalOverlay.show{ opacity:1; pointer-events:auto; }
+  #eventModalCard{
+    width:760px; max-width:80%; max-height:80%; background:var(--beige); border-radius:12px;
+    padding:52px 56px 44px; box-shadow:0 48px 120px rgba(0,0,0,.4);
+    transform:translateY(32px) scale(.96); transition:transform .35s cubic-bezier(.2,.8,.2,1);
+    position:relative; overflow-y:auto; box-sizing:border-box;
+  }
+  #eventModalOverlay.show #eventModalCard{ transform:translateY(0) scale(1); }
+  #eventModalCard .myear{ font-size:calc(22px * var(--font-scale)); letter-spacing:.15em; color:var(--ink-soft); margin-bottom:8px;}
+  #eventModalCard h2{ font-family:'Noto Serif TC',serif; font-size:calc(36px * var(--font-scale)); margin:0 0 16px; line-height:1.4; word-break:break-word;}
+  #eventModalCard p{ font-size:calc(24px * var(--font-scale)); line-height:1.75; color:#2A2A2A; margin:0; word-break:break-word;}
+  #eventModalClose{ position:absolute; top:20px; right:24px; background:none; border:none; font-size:36px; cursor:pointer; color:var(--ink-soft); width:52px; height:52px; line-height:1; }

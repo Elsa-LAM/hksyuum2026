@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "樹仁校史 · HKSYU History Timeline",
+      "hasCanvas": false,
+      "bodyTextLen": 147,
+      "bodyTextHash": "fc40cb55b145547627ebdb0b88f5856a8839a4fe3813a4fee49cbfac5664c4a4",
+      "bodyTextPrefix": "繁 簡 ENG Excel 樹仁校史 · 全域時間軸 HONG KONG SHUE YAN UNIVERSITY · 1971–",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "樹仁校史 · HKSYU History Timeline",
+      "hasCanvas": false,
+      "bodyTextLen": 147,
+      "bodyTextHash": "fc40cb55b145547627ebdb0b88f5856a8839a4fe3813a4fee49cbfac5664c4a4",
+      "bodyTextPrefix": "繁 簡 ENG Excel 樹仁校史 · 全域時間軸 HONG KONG SHUE YAN UNIVERSITY · 1971–",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-preview.json"
+}

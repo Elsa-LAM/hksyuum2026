@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<title>og</title>
+<style>
+  @font-face {
+    font-family: "Noto Serif TC";
+    src: url("./og-fonts/NotoSerifTC.woff2") format("woff2");
+    font-weight: 500 700;
+    font-style: normal;
+    font-display: block;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 1200px;
+    height: 630px;
+    overflow: hidden;
+    background: #F4F1EA;
+  }
+  .card {
+    position: relative;
+    width: 1200px;
+    height: 630px;
+    background:
+      radial-gradient(ellipse at 50% 42%, rgba(244,241,234,0) 0%, rgba(29,29,31,0.045) 100%),
+      linear-gradient(180deg, #F4F1EA 0%, #EDE8DC 100%);
+    color: #1D1D1F;
+    font-family: "Noto Serif TC", serif;
+  }
+  .stripe {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 5px;
+    background: #B85C5F;
+  }
+  .frame {
+    position: absolute;
+    inset: 32px;
+    border: 1px solid rgba(193,164,107,0.85);
+    pointer-events: none;
+  }
+  .frame::after {
+    content: "";
+    position: absolute;
+    inset: 7px;
+    border: 1px solid rgba(29,29,31,0.18);
+  }
+  .grain {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.11;
+    mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.11  0 0 0 0 0.11  0 0 0 0 0.10  0 0 0 0.55 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+  .skyline {
+    position: absolute;
+    left: 80px;
+    right: 80px;
+    bottom: 54px;
+    height: 168px;
+    opacity: 0.14;
+    color: #1D1D1F;
+  }
+  .lockup {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    padding-bottom: 12px;
+  }
+  .zh {
+    margin: 0;
+    font-weight: 700;
+    font-size: 124px;
+    line-height: 1;
+    letter-spacing: 0.22em;
+    padding-left: 0.22em;
+    color: #1D1D1F;
+    font-kerning: none;
+  }
+  .en {
+    margin: 22px 0 0 0;
+    font-weight: 500;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: 0.46em;
+    padding-left: 0.46em;
+    color: #C1A46B;
+  }
+  .rule {
+    position: relative;
+    margin-top: 34px;
+    width: 560px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent 0%, #C1A46B 12%, #C1A46B 88%, transparent 100%);
+  }
+  .seal {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #B85C5F;
+    color: #F4F1EA;
+    font-weight: 700;
+    font-size: 17px;
+    letter-spacing: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 0 6px #F4F1EA;
+    line-height: 1;
+  }
+  .caption {
+    margin: 28px 0 0 0;
+    font-weight: 500;
+    font-size: 14px;
+    letter-spacing: 0.42em;
+    padding-left: 0.42em;
+    color: rgba(29,29,31,0.55);
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="stripe"></div>
+    <div class="frame"></div>
+    <svg class="skyline" viewBox="0 0 1040 168" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0 168 L0 128 C80 118, 140 122, 210 108 L260 108 L260 62 L268 62 L268 108 L318 108 C360 96, 400 100, 430 88 L470 88 L470 28 L482 28 L482 88 L530 88 L530 48 L542 48 L542 88 L590 88 C640 70, 690 78, 740 64 L780 64 L780 36 L792 36 L792 64 L848 64 C900 78, 960 74, 1040 92 L1040 168 Z" fill="#1D1D1F"/>
+      <path d="M0 138 C180 128, 360 146, 520 132 C700 116, 860 134, 1040 124 L1040 168 L0 168 Z" fill="#C1A46B" opacity="0.55"/>
+    </svg>
+    <div class="lockup">
+      <p class="zh">樹仁校史</p>
+      <p class="en">History Timeline</p>
+      <div class="rule"><span class="seal">仁</span></div>
+      <p class="caption">香港樹仁大學</p>
+    </div>
+    <div class="grain"></div>
+  </div>
+</body>
+</html>

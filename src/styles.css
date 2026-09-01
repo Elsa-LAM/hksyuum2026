@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #111111;
+  --color-surface: #f4f1ea;
+  --color-fg: #1d1d1f;
+  --color-muted: #424242;
+  --color-primary: #b85c5f;
+  --color-border: #d9d3c6;
+  --radius: 0.75rem;
+  --font-sans: "Noto Sans TC", system-ui, sans-serif;
+  --font-display: "Noto Serif TC", "Noto Serif", serif;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #111;
+    color: #1d1d1f;
+  }
+}
