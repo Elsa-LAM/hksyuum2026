@@ -64,6 +64,14 @@ export function TimelineApp() {
               accept=".xlsx,.xls"
               style={{ display: "none" }}
             />
+            <button
+              type="button"
+              id="excelClearBtn"
+              title="清空本機已儲存的時間軸資料"
+              hidden
+            >
+              清空
+            </button>
           </div>
           <div id="title">
             <h1 id="uiTitle">樹仁校史 · 全域時間軸</h1>
@@ -79,7 +87,10 @@ export function TimelineApp() {
         </div>
 
         <div id="importHint">
-          <div className="importHintInner">正在載入校史時間軸…</div>
+          <div className="importHintInner">
+            <strong>尚未載入資料</strong>
+            <span>請按左上角「Excel」匯入工作簿。匯入後會保存在這個瀏覽器，可隨時按「清空」刪除。</span>
+          </div>
         </div>
 
         <div id="yearReadout">

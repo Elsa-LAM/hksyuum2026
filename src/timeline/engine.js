@@ -2,7 +2,6 @@
 import * as THREE from "three";
 import gsap from "gsap";
 import * as XLSX from "xlsx";
-import { DEMO_TOP, DEMO_BOTTOM, DEMO_PHOTOS } from "./demoData.js";
 
 export function mountTimeline() {
 "use strict";
@@ -58,9 +57,42 @@ let selection = null;
 let hoverTarget = null;
 
 const UI_TEXT = {
-  'zh-Hant': { title: '樹仁校史 · 全域時間軸', hint: '拖拽底部時間軸 / 滾動畫面瀏覽年代<br>點擊照片或事件查看關聯並自動對焦', yearLbl: 'CURRENT YEAR' },
-  'zh-Hans': { title: '树仁校史 · 全域时间轴', hint: '拖拽底部时间轴 / 滚动画面浏览年代<br>点击照片或事件查看关联并自动聚焦', yearLbl: 'CURRENT YEAR' },
-  'en': { title: 'HKSYU History · Global Timeline', hint: 'Drag timeline / Scroll to explore years<br>Click photo or event to reveal connections', yearLbl: 'CURRENT YEAR' }
+  'zh-Hant': {
+    title: '樹仁校史 · 全域時間軸',
+    hint: '拖拽底部時間軸 / 滾動畫面瀏覽年代<br>點擊照片或事件查看關聯並自動對焦',
+    yearLbl: 'CURRENT YEAR',
+    importTitle: '尚未載入資料',
+    importBody: '請按左上角「Excel」匯入工作簿。匯入後會保存在這個瀏覽器，可隨時按「清空」刪除。',
+    clearConfirm: '確定清空已儲存的時間軸資料？畫面會回到空白，需重新匯入 Excel。',
+    statusImported: (t,b,p) => `已匯入並保存：${t} 筆上軌／${b} 筆下軌／${p} 張照片`,
+    statusRestored: (t,b,p) => `已載入本機紀錄：${t} 筆上軌／${b} 筆下軌／${p} 張照片`,
+    statusCleared: '已清空本機紀錄',
+    statusEmpty: ''
+  },
+  'zh-Hans': {
+    title: '树仁校史 · 全域时间轴',
+    hint: '拖拽底部时间轴 / 滚动画面浏览年代<br>点击照片或事件查看关联并自动聚焦',
+    yearLbl: 'CURRENT YEAR',
+    importTitle: '尚未载入资料',
+    importBody: '请按左上角「Excel」汇入工作簿。汇入后会保存在这个浏览器，可随时按「清空」删除。',
+    clearConfirm: '确定清空已保存的时间轴资料？画面会回到空白，需重新汇入 Excel。',
+    statusImported: (t,b,p) => `已汇入并保存：${t} 笔上轨／${b} 笔下轨／${p} 张照片`,
+    statusRestored: (t,b,p) => `已载入本机纪录：${t} 笔上轨／${b} 笔下轨／${p} 张照片`,
+    statusCleared: '已清空本机纪录',
+    statusEmpty: ''
+  },
+  'en': {
+    title: 'HKSYU History · Global Timeline',
+    hint: 'Drag timeline / Scroll to explore years<br>Click photo or event to reveal connections',
+    yearLbl: 'CURRENT YEAR',
+    importTitle: 'No data loaded',
+    importBody: 'Use Excel in the top-left to import the workbook. It is saved in this browser until you Clear it.',
+    clearConfirm: 'Clear the saved timeline data? The view will go blank until you import Excel again.',
+    statusImported: (t,b,p) => `Imported and saved: ${t} top / ${b} context / ${p} photos`,
+    statusRestored: (t,b,p) => `Restored: ${t} top / ${b} context / ${p} photos`,
+    statusCleared: 'Saved data cleared',
+    statusEmpty: ''
+  }
 };
 
 let currentLang = 'zh-Hant';
@@ -323,6 +355,77 @@ function applyDataset(ds){
   Object.keys(bottomById).forEach(k => delete bottomById[k]);
   topMilestones.forEach(m => topById[m.id] = m);
   bottomMilestones.forEach(m => bottomById[m.id] = m);
+}
+
+/* 匯入結果存在這個瀏覽器的 localStorage，重新整理後仍可還原；沒有預設紀錄。 */
+const STORAGE_KEY = 'hksyu-timeline-workbook-v1';
+
+function sanitizeCell(v){
+  if(v instanceof Date && !isNaN(v.getTime())) return v.getFullYear();
+  if(v === undefined || v === null) return '';
+  if(typeof v === 'number' && Number.isFinite(v)) return v;
+  if(typeof v === 'boolean') return v;
+  return String(v);
+}
+function serializeRows(rows){
+  return (rows || []).map(row => {
+    const out = {};
+    Object.keys(row || {}).forEach(k => { out[k] = sanitizeCell(row[k]); });
+    return out;
+  });
+}
+function emptyDataset(){
+  return { topRows: [], bottomRows: [], photoRows: [] };
+}
+function saveWorkbookCache(raw, fileName){
+  try{
+    const payload = {
+      version: 1,
+      fileName: fileName || '',
+      savedAt: Date.now(),
+      topRows: serializeRows(raw.topRows),
+      bottomRows: serializeRows(raw.bottomRows),
+      photoRows: serializeRows(raw.photoRows)
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    return true;
+  }catch(err){
+    console.warn('無法寫入本機紀錄', err);
+    return false;
+  }
+}
+function loadWorkbookCache(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return null;
+    const data = JSON.parse(raw);
+    if(!data || !Array.isArray(data.topRows) || !Array.isArray(data.bottomRows) || !Array.isArray(data.photoRows)) return null;
+    return data;
+  }catch(err){
+    console.warn('無法讀取本機紀錄', err);
+    return null;
+  }
+}
+function clearWorkbookCache(){
+  try{ localStorage.removeItem(STORAGE_KEY); }catch(err){ /* ignore */ }
+}
+function setDataChrome(hasData, statusText){
+  const hint = document.getElementById('importHint');
+  const clearBtn = document.getElementById('excelClearBtn');
+  const statusEl = document.getElementById('excelStatus');
+  if(hint) hint.classList.toggle('hidden', !!hasData);
+  if(clearBtn) clearBtn.hidden = !hasData;
+  if(statusEl && statusText !== undefined) statusEl.textContent = statusText || '';
+}
+function uiCopy(){
+  return UI_TEXT[currentLang] || UI_TEXT['zh-Hant'];
+}
+function refreshImportHintCopy(){
+  const titleEl = document.querySelector('#importHint strong');
+  const bodyEl = document.querySelector('#importHint span');
+  const txt = uiCopy();
+  if(titleEl) titleEl.textContent = txt.importTitle;
+  if(bodyEl) bodyEl.textContent = txt.importBody;
 }
 
 function photoDetail(idx){
@@ -1523,6 +1626,7 @@ document.querySelectorAll('.langBtn').forEach(btn => {
     document.getElementById('uiTitle').innerText = txt.title;
     document.getElementById('hint').innerHTML = txt.hint;
     document.getElementById('uiYearLbl').innerText = txt.yearLbl;
+    refreshImportHintCopy();
 
     const fsLabels = FONT_SIZE_LABELS[lang] || FONT_SIZE_LABELS['zh-Hant'];
     document.querySelectorAll('.fontSizeOption').forEach(opt => {
@@ -2109,6 +2213,7 @@ const BACKGROUND_CLICK_IGNORE_SELECTOR = [
   '.langBtn',             // 語言切換按鈕
   '#excelImportBtn',      // Excel 匯入按鈕
   '#excelFileInput',
+  '#excelClearBtn',
   '.fontToggleBtn',       // 字體大小切換 aA 按鈕
   '.fontSizeOption',      // 字體大小選單選項
   '#modalCard',           // 照片詳情彈窗本體
@@ -2170,7 +2275,12 @@ function parseWorkbook(wb){
   if(bottomRaw === null) missing.push(SHEET_NAMES.bottom);
   if(photoRaw === null) missing.push(SHEET_NAMES.photo);
   if(missing.length) throw new Error(`找不到分頁：${missing.join('、')}`);
-  return buildDataset(topRaw, bottomRaw, photoRaw);
+  const raw = {
+    topRows: serializeRows(topRaw),
+    bottomRows: serializeRows(bottomRaw),
+    photoRows: serializeRows(photoRaw)
+  };
+  return { raw, ds: buildDataset(raw.topRows, raw.bottomRows, raw.photoRows) };
 }
 
 // 以新資料整個重建畫面：關聯索引、事件卡片 DOM、相片鏈 mesh，並重置選取／篩選狀態
@@ -2222,27 +2332,40 @@ document.getElementById('excelFileInput').addEventListener('change', async (e) =
   const file = e.target.files[0];
   if(!file) return;
   const statusEl = document.getElementById('excelStatus');
-  statusEl.textContent = '匯入中…';
+  statusEl.textContent = currentLang === 'en' ? 'Importing…' : (currentLang === 'zh-Hans' ? '汇入中…' : '匯入中…');
   try{
     const buf = await file.arrayBuffer();
     // v8：cellDates:true 讓 Excel「日期格式」儲存格（如 1971/1/1）直接讀出 JS Date 物件，
     // 交由 parseYear() 統一擷取西元年份，而非停留在難以判讀的 Excel 日期序列數字
     const wb = XLSX.read(buf, { type:'array', cellDates:true });
-    const ds = parseWorkbook(wb);
+    const parsed = parseWorkbook(wb);
+    const ds = parsed.ds;
     const total = ds.topRows.length + ds.bottomRows.length + ds.photoRows.length;
     if(total === 0){
       throw new Error('解析成功但沒有讀到任何資料，請確認分頁名稱與欄位（id / year / title-TC…）是否正確');
     }
+    const saved = saveWorkbookCache(parsed.raw, file.name);
     rebuildTimeline(ds);
-    statusEl.textContent = `已匯入：${ds.topRows.length} 筆上軌／${ds.bottomRows.length} 筆下軌／${ds.photoRows.length} 張照片`;
-    document.getElementById('importHint').classList.add('hidden');
+    const txt = uiCopy();
+    const status = txt.statusImported(ds.topRows.length, ds.bottomRows.length, ds.photoRows.length)
+      + (saved ? '' : (currentLang === 'en' ? ' (browser storage full — not kept)' : '（本機空間不足，重新整理後不會保留）'));
+    setDataChrome(true, status);
   }catch(err){
     console.error('Excel 解析失敗', err);
-    statusEl.textContent = `匯入失敗：${err.message || err}`;
+    const msg = `匯入失敗：${err.message || err}`;
+    setDataChrome(!!(topMilestones.length || bottomMilestones.length || photosData.length), msg);
     alert(`Excel 匯入失敗：${err.message || err}`);
   }finally{
     e.target.value = '';
   }
+});
+
+document.getElementById('excelClearBtn').addEventListener('click', () => {
+  const txt = uiCopy();
+  if(!window.confirm(txt.clearConfirm)) return;
+  clearWorkbookCache();
+  rebuildTimeline(emptyDataset());
+  setDataChrome(false, txt.statusCleared);
 });
 
 /* =========================================================
@@ -2316,15 +2439,24 @@ function animate(){
   renderer.render(scene, camera);
 }
 
+  refreshImportHintCopy();
   try {
-    const ds = buildDataset(DEMO_TOP, DEMO_BOTTOM, DEMO_PHOTOS);
-    rebuildTimeline(ds);
-    const statusEl = document.getElementById('excelStatus');
-    if(statusEl) statusEl.textContent = `示範資料：${ds.topRows.length} 筆上軌／${ds.bottomRows.length} 筆下軌／${ds.photoRows.length} 張照片`;
-    const hint = document.getElementById('importHint');
-    if(hint) hint.classList.add('hidden');
+    const cached = loadWorkbookCache();
+    if(cached){
+      const ds = buildDataset(cached.topRows, cached.bottomRows, cached.photoRows);
+      const total = ds.topRows.length + ds.bottomRows.length + ds.photoRows.length;
+      if(total > 0){
+        rebuildTimeline(ds);
+        setDataChrome(true, uiCopy().statusRestored(ds.topRows.length, ds.bottomRows.length, ds.photoRows.length));
+      } else {
+        setDataChrome(false, '');
+      }
+    } else {
+      setDataChrome(false, '');
+    }
   } catch (err) {
-    console.error('示範資料載入失敗', err);
+    console.error('本機紀錄載入失敗', err);
+    setDataChrome(false, '');
   }
 
   animate();
