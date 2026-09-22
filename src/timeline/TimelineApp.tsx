@@ -19,6 +19,7 @@ export function TimelineApp() {
             <span className="label"></span>
           </div>
         </div>
+        <div id="bandMid"></div>
         <div id="bandBottom">
           <div id="bottomTrackLabel">
             <span className="label"></span>
@@ -156,23 +157,16 @@ export function TimelineApp() {
             <button id="modalClose" type="button">
               ✕
             </button>
-            <img id="modalImg" alt="" />
-            <img
-              id="modalImg2"
-              alt=""
-              style={{
-                display: "none",
-                width: 64,
-                height: 64,
-                objectFit: "cover",
-                borderRadius: 6,
-                position: "absolute",
-                right: 20,
-                top: 20,
-                cursor: "pointer",
-                border: "2px solid rgba(255,255,255,.6)",
-              }}
-            />
+            <div id="modalImgWrap">
+              <button type="button" id="modalPrev" className="modalNav" aria-label="上一張">
+                ‹
+              </button>
+              <img id="modalImg" alt="" />
+              <button type="button" id="modalNext" className="modalNav" aria-label="下一張">
+                ›
+              </button>
+              <div id="modalPhotoCount"></div>
+            </div>
             <div className="myear" id="modalYear"></div>
             <h2 id="modalTitle"></h2>
             <p id="modalDesc"></p>

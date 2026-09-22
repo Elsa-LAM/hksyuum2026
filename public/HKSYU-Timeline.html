@@ -1,9 +1,576 @@
-// @ts-nocheck
-import * as THREE from "three";
-import gsap from "gsap";
-import * as XLSX from "xlsx";
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>樹仁校史 · 全域時間軸</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="香港樹仁大學校史全域時間軸。拖曳年代、點擊照片與事件。單一 HTML，以瀏覽器開啟即可。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;600;700&family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
 
-export function mountTimeline() {
+  :root{
+    --beige:#F4F1EA;
+    --beige-bottom:#E9E5DA;
+    /* v14-12 對比度優化：主文字色從偏棕的 #2B2722 加深為接近純黑的
+       #1D1D1F（沿用需求建議值），次要文字/軸線色從偏淺的 #6b6459 加深為
+       中深灰 #424242，全面提升可讀性；#8E8A86（軸線／刻度／引導線用的
+       淺灰）也一併改用 --line-ink 這個新變數統一管理，同樣調深。 */
+    --ink:#1D1D1F;
+    --ink-soft:#424242;
+    --line-ink:#424242;
+    --catA:#B85C5F; --catB:#C1A46B; --catC:#7D6A8E; --catD:#6B8E7A; --catE:#5C6E84;
+    --font-scale:1;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:#111;height:100%;overflow:hidden;font-family:'Noto Sans TC',sans-serif;color:var(--ink);}
+  #wrap{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  #stage{
+    position:relative;
+    width:3840px;
+    height:2160px;
+    flex:none;
+    background:var(--beige);
+    touch-action:none;
+    overflow:hidden;
+    box-shadow:0 40px 120px rgba(0,0,0,.5);
+    transform-origin:center center;
+    will-change:transform;
+  }
+
+  #bandTop, #bandBottom{ position:absolute; left:0; right:0; transition:background-color .55s ease; }
+  #bandTop{ top:0; height:36%; background:var(--beige); }
+  #bandBottom{ bottom:0; height:36%; background:var(--beige-bottom); }
+
+  /* 下軌固定區塊標籤：固定在下軌米黃色區域「頂部邊緣」（貼近中央分隔線），
+     與上軌標籤呈鏡面對稱；與下方時間軸主線、刻度保持安全距離 */
+  #bottomTrackLabel{
+    position:absolute; top:15px; left:25px; z-index:10;
+    margin-bottom:30px; /* 與下方時間軸主線、刻度之間的安全距離保證 ≥30px */
+    padding:7px 16px; border-radius:14px; width:fit-content;
+    background:rgba(255,255,255,.55); box-shadow:0 2px 8px rgba(0,0,0,.08);
+    font-family:'Noto Serif TC',serif; font-weight:700;
+    font-size:calc(16px * var(--font-scale)); letter-spacing:.06em;
+    color:var(--ink); pointer-events:none;
+  }
+
+  #threeHost{ position:absolute; inset:0; z-index:5; touch-action:none; }
+  #threeHost canvas{ display:block; touch-action:none; cursor:grab; }
+
+  .msLayer{ position:absolute; inset:0; z-index:6; pointer-events:none; }
+  /* v14-16 需求：連接線（.stem）改放到一個獨立的、比事件卡片層更低的圖層。
+     原因：.ms 有 transform:translate(-50%,-50%)（transform 會建立獨立的
+     stacking context），所以「卡片 z-index:1 > 連接線 z-index:0」這個規則
+     只在「同一個 .ms 內部」有效；不同事件之間，瀏覽器仍然是照 DOM 順序
+     畫，後面事件的連接線就會蓋到前面事件的卡片上（.ms.dim 的 opacity:.25
+     同樣會建立 stacking context，情況一樣）。唯一可靠的解法是把所有連接線
+     搬到自己的圖層，整層壓在所有卡片之下。
+     z-index 用 5（跟 #threeHost 相同）並排在 #threeHost 之後：連接線仍畫在
+     照片之上，但一定畫在 .msLayer（z-index:6）的卡片之下。 */
+  .msStemLayer{ z-index:5; }
+  .ms{
+    position:absolute; transform:translate(-50%,-50%);
+    pointer-events:auto; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; gap:calc(6px * var(--font-scale));
+    transition:opacity .45s ease, transform .45s ease;
+    opacity:1;
+    font-size:calc(16px * var(--font-scale));
+    padding:0.15em 0.4em;
+    max-width: calc(168px + 48px * var(--font-scale));
+  }
+  .ms.ms-top{ flex-direction:column; }
+  .ms.ms-bottom{ flex-direction:column; }
+  /* 事件節點圖示（Icon/Dot）：尺寸與外圈光暈皆隨 --font-scale 等比例放大，
+     確保字體調整時圖示與文字比例維持一致，不會出現「字大圖小」的失衡感 */
+  .ms .dot{
+    width:calc(14px * var(--font-scale));height:calc(14px * var(--font-scale));border-radius:50%;
+    background:var(--ink); box-shadow:0 0 0 calc(6px * var(--font-scale)) rgba(255,255,255,.55);
+    transition:background .3s ease, box-shadow .3s ease, width .3s ease, height .3s ease;
+    flex:none;
+    /* 跟 .msCard 同理：給它明確的堆疊層級，確保圓點本身也不會被 .stem
+       這條定位元素的連接線蓋過。 */
+    position:relative; z-index:1;
+  }
+  /* .msCard 把卡片本體（.lbl／.yr）跟 .dot／.stem 分開包成一層，純粹是
+     DOM 結構上的分組，方便量測卡片自己的高度；v14-14 移除了「靠近邊緣時
+     額外位移卡片」的機制（會讓卡片跟著捲動位置漂移，使用者回報事件看起來
+     沒有固定在自己的年份上），現在 .msCard 永遠跟 .dot 對齊，不會有任何
+     額外的水平位移。
+     v14-16：連接線（.stem）已改由獨立的 .msStemLayer 圖層繪製、整層壓在
+     卡片圖層之下（見上方 .msStemLayer 說明），所以「連接線遮擋卡片」已在
+     圖層層級解決；這裡保留 position:relative + z-index 只是讓卡片內容在
+     .ms 內部維持穩定的堆疊順序。 */
+  .msCard{
+    display:flex; flex-direction:column; align-items:center; gap:calc(4px * var(--font-scale));
+    position:relative; z-index:1;
+  }
+  /* v14-13 需求 2：改用固定 width（不是 max-width）——卡片寬度是一個
+     寫死的常數，不會因為視窗大小或旁邊元素擠壓而變窄／變形；標題文字用
+     white-space:normal + word-break:break-word 換行，行數不夠時卡片下緣
+     自然縮短，行數不夠寬時內距留白，寬度本身永遠不變。
+     v14-15：寬度從 240px 加大到 300px——加寬後大部份標題（含較長的英文
+     標題）都能在 2~3 行內放完，不用再堆疊到 4 行以上。 */
+  .ms .lbl{
+    font-size:calc(16px * var(--font-scale)); letter-spacing:.02em; color:var(--ink);
+    background:rgba(244,241,234,.94); padding:calc(4px * var(--font-scale)) calc(10px * var(--font-scale)); border-radius:6px;
+    box-sizing:border-box;
+    white-space:normal;
+    width:calc(148px + 44px * var(--font-scale));
+    max-width:280px;
+    height:auto; line-height:1.35;
+    text-align:center; word-break:break-word; overflow-wrap:break-word;
+    display:-webkit-box;
+    -webkit-box-orient:vertical;
+    -webkit-line-clamp:2;
+    overflow:hidden;
+    box-shadow:0 2px 6px rgba(0,0,0,.08);
+    text-shadow:-1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF;
+  }
+  .ms .yr{
+    font-size:calc(15px * var(--font-scale)); color:var(--ink-soft); font-weight:600;
+    line-height:1.2;
+    text-shadow:-1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF;
+  }
+  /* .lbl 有自己的淺色底卡，維持深色文字即可確保對比 */
+  .ms.hidden{ display:none; opacity:0; pointer-events:none; transform:translate(-50%,-50%) scale(.6); }
+  .ms.dim{ opacity:.25; }
+  /* v14-12 需求 3：加強「當前選中節點」的視覺強化——原本只有放大紅點＋
+     加粗文字，這裡再加上明確的深色外框與對比色底卡，讓選中狀態一眼就能
+     辨識，不用靠旁邊比較才看得出差異。 */
+  .ms.active .dot{ width:calc(24px * var(--font-scale));height:calc(24px * var(--font-scale)); background:#c0392b; box-shadow:0 0 0 calc(8px * var(--font-scale)) rgba(192,57,43,.32); }
+  .ms.active .lbl{
+    font-weight:700; color:#fff; background:#c0392b;
+    border:calc(2px * var(--font-scale)) solid #7a2015;
+    box-shadow:0 4px 14px rgba(192,57,43,.45);
+    text-shadow:none;
+  }
+  .ms.active .yr{ color:#7a2015; font-weight:700; }
+  .ms.active{ transform:translate(-50%,-50%) translateY(calc(-8px * var(--font-scale))); }
+
+  /* ---------- 主時間軸線與連接引導線 ---------- */
+  .axisLayer{ position:absolute; left:0; right:0; height:0; z-index:6; pointer-events:none; }
+  #topAxisLayer{ top:30%; }
+  #bottomAxisLayer{ top:70%; }
+  .axisLine{ position:absolute; left:0; right:0; top:0; height:2px; background:var(--line-ink); }
+  .axisTick{
+    position:absolute; top:0; left:0;
+    transform:translateX(-50%);
+    width:0; height:0;
+    pointer-events:none;
+  }
+  .axisTickMark{
+    position:absolute; left:0; top:0;
+    transform:translate(-50%,-50%);
+    width:2px; height:28px; background:var(--line-ink);
+  }
+  .axisTickYear{
+    position:absolute; left:0;
+    transform:translateX(-50%);
+    font-size:calc(16px * var(--font-scale)); font-weight:600; color:var(--ink);
+    letter-spacing:.05em; white-space:nowrap;
+    text-shadow:-1px -1px 0 #FFF, 1px -1px 0 #FFF, -1px 1px 0 #FFF, 1px 1px 0 #FFF;
+    background:rgba(244,241,234,.92);
+    padding:2px 8px; border-radius:8px;
+    /* Keep year numerals well clear of the axis — stage px look ~⅓ size on a laptop preview */
+    bottom: calc(44px + 30px * var(--font-scale));
+  }
+  .axisTick.axisTick-bottom .axisTickYear{
+    bottom:auto;
+    top: calc(44px + 30px * var(--font-scale));
+  }
+
+  /* 連接線本體：現在是 .msStemLayer 的直接子元素（不再是 .ms 的子元素），
+     水平位置（left）與垂直位置（top / height）都由 JS 直接寫入行內樣式，
+     計算方式與原本完全相同：由「卡片靠主軸線的那一側邊緣」延伸到主軸線。
+     下面的 hidden / dim / active 三個狀態與 .ms 的同名狀態一一對應，由
+     syncStemStates() 同步，確保篩選、淡化、選中時連接線的表現跟卡片一致。 */
+  .stem{
+    position:absolute; width:2px; background:var(--line-ink);
+    transform:translateX(-50%);
+    transition:opacity .45s ease, transform .45s ease;
+    opacity:1; pointer-events:none;
+  }
+  .stem.hidden{ display:none; }
+  .stem.dim{ opacity:.25; }
+  /* 與 .ms.active 的 translateY 位移量一致，選中時卡片與連接線一起上移，
+     兩者不會脫節。 */
+  .stem.active{ transform:translateX(-50%) translateY(calc(-8px * var(--font-scale))); }
+
+  #guideLine{
+    position:absolute; top:0; bottom:0; width:0;
+    border-left:2px dashed var(--line-ink);
+    z-index:18; pointer-events:none;
+    opacity:0; transition:opacity .25s ease;
+  }
+
+  /* 左上角標題與語系切換區塊 */
+  /* 防撞安全距離（Guard）：加上不透明底卡與 z-index，確保下方卡片／連接線
+     不論捲動到哪個年份，都絕對不會覆蓋或遮擋左上角標題文字 */
+  #headerLeft{
+    position:absolute; left:32px; top:16px; z-index:30;
+    display:flex; flex-direction:column; gap:16px;
+    padding:20px 32px 24px 24px;
+    background:rgba(244,241,234,.98);
+    box-shadow:0 8px 24px rgba(244,241,234,.85);
+    border-radius:20px;
+  }
+  
+  #langSwitch{ display:flex; gap:12px; align-items:center; }
+  /* v14-12 需求 4：langBtn 改用 em 為單位的寬高——font-size 隨 --font-scale
+     縮放，width/height 用 em 表示（2.8em），字體變大時整個圓形按鈕（含可
+     點擊範圍）會跟著等比例放大，不會維持在字體放大前的固定 56px。 */
+  .langBtn{
+    font-size:calc(20px * var(--font-scale)); font-weight:700;
+    width:2.8em; height:2.8em; border-radius:50%; border:3px solid rgba(43,39,34,.3);
+    background:#FFFFFF; color:var(--ink);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+    transition:all .25s ease; user-select:none;
+  }
+  .langBtn:hover{ background:#fff; transform:scale(1.1); }
+  .langBtn.active{ background:var(--ink); color:var(--beige); border-color:var(--ink); box-shadow:0 4px 12px rgba(0,0,0,.2); }
+
+  /* Excel 資料匯入按鈕（讀取「上軌事件／下軌事件／照片列」三個分頁） */
+  /* v14-12 需求 4：padding 改用 em（0.5em 1em），font-size 隨 --font-scale
+     縮放，字體放大時按鈕本身與可點擊範圍會一起等比例變大。 */
+  #excelImportBtn{
+    font-size:calc(14px * var(--font-scale)); font-weight:600;
+    padding:0.5em 1em; border-radius:20px; border:2px solid rgba(43,39,34,.3);
+    background:rgba(255,255,255,.6); color:var(--ink);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+    transition:all .25s ease; user-select:none; white-space:nowrap;
+  }
+  #excelImportBtn:hover{ background:#fff; }
+  #excelClearBtn{
+    font-size:calc(14px * var(--font-scale)); font-weight:600;
+    padding:0.5em 1em; border-radius:20px; border:2px solid rgba(43,39,34,.3);
+    background:rgba(255,255,255,.6); color:var(--ink);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+    transition:all .25s ease; user-select:none; white-space:nowrap;
+  }
+  #excelClearBtn:hover{ background:#fff; }
+  #excelClearBtn[hidden]{ display:none !important; }
+  #excelStatus{ font-size:13px; color:var(--ink); opacity:.85; min-height:16px; }
+
+  #title{ font-family:'Noto Serif TC',serif; }
+  #title h1{ margin:0; font-size:calc(38px * var(--font-scale)); font-weight:700; letter-spacing:.06em; color:var(--top-text-color, var(--ink));}
+  #title p{ margin:4px 0 0; font-size:calc(20px * var(--font-scale)); color:var(--top-text-color, var(--ink-soft)); letter-spacing:.1em;}
+
+  /* 上軌動態類別標籤：位於左上角標題正下方，顏色隨目前選中的分類即時變動 */
+  /* 上軌動態類別標籤：固定在上軌米黃色區域「底部邊緣」（貼近中央分隔線），
+     與下軌標籤 #bottomTrackLabel 呈鏡面對稱；位於 1971 年份刻度左側空白處，
+     不與任何年份數字、刻度線或軸線重疊 */
+  #topCatBadge{
+    position:absolute; bottom:15px; left:25px; z-index:10;
+    margin-top:30px; /* 與上方時間軸主線、刻度之間的安全距離保證 ≥30px */
+    display:none; align-items:center; gap:9px; width:fit-content;
+    padding:7px 16px; border-radius:14px;
+    background:rgba(255,255,255,.55); box-shadow:0 2px 8px rgba(0,0,0,.08);
+    font-family:'Noto Serif TC',serif; font-weight:600;
+    font-size:calc(16px * var(--font-scale)); letter-spacing:.05em;
+    pointer-events:none;
+  }
+  #topCatBadge.show{ display:flex; }
+  #topCatBadge .dot{ font-size:1.05em; line-height:1; }
+  #topCatBadge .label{ white-space:nowrap; }
+
+  /* 提示文字：不論上軌背景切換成哪個分類色，文字顏色一律固定為 --line-ink；
+     opacity 透過 JS（resetHintTimer）依「使用者是否閒置」動態切換，
+     transition 讓淡入／淡出有平滑過場。pointer-events:none 確保這段
+     純提示文字不會擋到下方畫布或背景空白區域的點擊（含清空選取功能）。
+     v14-12：原本的 #8E8A86 太淺，改用跟軸線一致的 --line-ink（#424242）
+     加深對比。 */
+  #hint{
+    position:absolute; top:32px; right:48px; z-index:20;
+    font-size:calc(21px * var(--font-scale)); color:var(--line-ink);
+    text-align:right; line-height:1.6; max-width:520px;
+    opacity:1; transition:opacity .5s ease; pointer-events:none;
+  }
+
+  /* 尚未匯入 Excel 資料時的提示層 */
+  #importHint{
+    position:absolute; inset:0; z-index:15;
+    display:flex; align-items:center; justify-content:center;
+    pointer-events:none;
+  }
+  #importHint.hidden{ display:none; }
+  .importHintInner{
+    max-width:760px; padding:32px 48px; border-radius:20px;
+    background:rgba(244,241,234,.92); color:var(--ink);
+    font-family:'Noto Serif TC',serif; letter-spacing:.04em;
+    box-shadow:0 12px 32px rgba(0,0,0,.15);
+    display:flex; flex-direction:column; gap:10px; text-align:center;
+  }
+  .importHintInner strong{
+    font-size:28px; font-weight:700;
+  }
+  .importHintInner span{
+    font-size:20px; font-weight:500; line-height:1.55; color:var(--ink-soft);
+  }
+
+  #yearReadout{
+    position:absolute; right:52px; top:50%; transform:translateY(-50%);
+    z-index:15; text-align:right; pointer-events:none;
+  }
+  #yearReadout .num{
+    font-family:'Noto Serif TC',serif; font-weight:700; font-size:calc(112px * var(--font-scale));
+    color:var(--ink); line-height:1; text-shadow:0 4px 20px rgba(244,241,234,.9);
+  }
+  #yearReadout .lbl{ font-size:calc(20px * var(--font-scale)); letter-spacing:.2em; color:var(--ink-soft); margin-top:8px;}
+
+  /* v14-12 需求 5：分類選單改成直列式（column）排列，並從單字母代碼改回
+     完整類別名稱——名稱長度不一（中英文皆有可能超過一行），所以每顆
+     按鈕從「固定寬高的正圓形」改成「寬度固定、高度隨內容 auto 撐開的
+     藥丸形」，文字用 white-space:normal 讓完整名稱自然換行、不截斷
+     （呼應需求 2）。align-items:flex-end 讓藥丸右緣切齊畫面右邊界。 */
+  #catButtons{
+    position:absolute; right:48px; bottom:128px; z-index:20;
+    display:flex; flex-direction:column; align-items:flex-end;
+    gap:calc(12px * var(--font-scale));
+  }
+  .catBtn{
+    display:flex; align-items:center; gap:calc(10px * var(--font-scale));
+    width:calc(168px + 48px * var(--font-scale)); max-width:268px; box-sizing:border-box;
+    border-radius:999px; border:3px solid rgba(43,39,34,.25); cursor:pointer;
+    font-family:'Noto Serif TC',serif; font-weight:600;
+    font-size:calc(16px * var(--font-scale));
+    /* 需求 4：padding 用 em，點擊區域隨字體大小走 */
+    padding:0.55em 0.9em;
+    color:var(--ink); background:rgba(255,255,255,.72);
+    white-space:normal; line-height:1.3; text-align:left; word-break:break-word;
+    transition:transform .25s ease, box-shadow .25s ease, border-color .25s ease, background .25s ease;
+  }
+  .catBtn .catDot{
+    width:1.1em; height:1.1em; border-radius:50%; flex:none;
+    box-shadow:0 0 0 2px rgba(255,255,255,.8) inset;
+  }
+  .catBtn .catBtnLabel{ flex:1 1 auto; }
+  .catBtn:hover{ transform:translateX(-6px); background:rgba(255,255,255,.92); }
+  .catBtn.on{
+    border-color:var(--ink); box-shadow:0 8px 20px rgba(0,0,0,.25);
+    transform:translateX(-8px); background:#fff; font-weight:700;
+  }
+  .catBtn[data-c="A"] .catDot{ background:var(--catA); }
+  .catBtn[data-c="B"] .catDot{ background:var(--catB); }
+  .catBtn[data-c="C"] .catDot{ background:var(--catC); }
+  .catBtn[data-c="D"] .catDot{ background:var(--catD); }
+  .catBtn[data-c="E"] .catDot{ background:var(--catE); }
+
+  /* ---------- 左下角文字大小切換選單 ---------- */
+  #fontSizeSwitch{ position:absolute; left:48px; bottom:32px; z-index:22; display:flex; flex-direction:column-reverse; align-items:flex-start; gap:14px; }
+  /* v14-12 需求 4：min-width/height 改用 em、padding 改用 em，字體放大時
+     按鈕大小與可點擊範圍一起等比例放大。 */
+  .fontToggleBtn{
+    font-size:calc(20px * var(--font-scale)); font-weight:700;
+    min-width:3.2em; height:3.2em; padding:0 0.8em; border-radius:1.6em;
+    border:3px solid rgba(43,39,34,.3);
+    background:rgba(255,255,255,.6); color:var(--ink);
+    font-family:'Noto Serif TC',serif;
+    cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    transition:all .25s ease; user-select:none; white-space:nowrap;
+  }
+  .fontToggleBtn:hover{ background:#fff; transform:scale(1.08); }
+  .fontToggleBtn .aaSmall{ display:inline-flex; align-items:center; font-size:50%; line-height:1; }
+  .fontToggleBtn .aaBig{ display:inline-flex; align-items:center; font-size:100%; line-height:1; margin-left:1px; }
+  .fontSizeMenu{
+    display:flex; flex-direction:column; gap:10px;
+    max-height:0; opacity:0; pointer-events:none; overflow:hidden;
+    transition:max-height .35s ease, opacity .3s ease;
+  }
+  .fontSizeMenu.open{ max-height:320px; opacity:1; pointer-events:auto; }
+  .fontSizeOption{
+    font-size:calc(18px * var(--font-scale)); font-weight:600;
+    min-width:3.2em; padding:0.5em 1em; border-radius:20px;
+    background:rgba(255,255,255,.6); border:3px solid rgba(43,39,34,.2);
+    color:var(--ink); text-align:center;
+    cursor:pointer; white-space:nowrap; transition:all .2s ease; user-select:none;
+  }
+  .fontSizeOption:hover{ background:#fff; }
+  .fontSizeOption.active{ background:var(--ink); color:var(--beige); border-color:var(--ink); }
+
+  /* ---------- bottom global timeline bar ---------- */
+  #timelineBar{
+    position:absolute; left:50%; bottom:32px; transform:translateX(-50%);
+    width:58%; z-index:25; user-select:none;
+  }
+  #tlTrack{
+    position:relative; height:10px; border-radius:6px;
+    background:rgba(43,39,34,.18); cursor:pointer;
+  }
+  #tlFill{ position:absolute; top:0; left:0; height:100%; background:rgba(43,39,34,.4); border-radius:3px; }
+  #tlThumb{
+    position:absolute; top:50%; width:32px; height:32px; border-radius:50%;
+    background:var(--ink); box-shadow:0 4px 12px rgba(0,0,0,.35), 0 0 0 8px rgba(244,241,234,.8);
+    transform:translate(-50%,-50%); cursor:grab;
+  }
+  #tlThumb:active{ cursor:grabbing; }
+  #tlTicks{ position:relative; height:28px; margin-top:8px; }
+  /* v14-6 修補：底部拖拽列的年份標籤字級縮小（17px → 13px）並加大字距，
+     配合下面 JS 的動態稀疏化（computeTimelineTickStep）——年份數字本身
+     變窄，需要的最小可讀間距也跟著變小，兩者一起降低早期／密度較低
+     年份區段標籤擠成一團的機率；white-space:nowrap 防止數字被意外拆行。 */
+  .tlTick{ position:absolute; top:0; transform:translateX(-50%); font-size:calc(13px * var(--font-scale)); color:var(--ink-soft); letter-spacing:0.5px; white-space:nowrap; }
+
+  /* ---------- modal ---------- */
+  #modalOverlay{
+    position:absolute; inset:0; z-index:60; background:rgba(20,18,15,.35);
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none; transition:opacity .35s ease;
+  }
+  #modalOverlay.show{ opacity:1; pointer-events:auto; }
+  #modalCard{
+    width:840px; max-width:80%; max-height:86%; background:var(--beige); border-radius:12px;
+    padding:52px 56px 44px; box-shadow:0 48px 120px rgba(0,0,0,.4);
+    transform:translateY(32px) scale(.96); transition:transform .35s cubic-bezier(.2,.8,.2,1);
+    position:relative; overflow-y:auto; box-sizing:border-box;
+  }
+  #modalOverlay.show #modalCard{ transform:translateY(0) scale(1); }
+  #modalCard img{ width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:8px; margin-bottom:28px; display:block;}
+  #modalCard .myear{ font-size:calc(22px * var(--font-scale)); letter-spacing:.15em; color:var(--ink-soft); margin-bottom:8px;}
+  #modalCard h2{ font-family:'Noto Serif TC',serif; font-size:calc(38px * var(--font-scale)); margin:0 0 16px; line-height:1.4; word-break:break-word;}
+  #modalCard p{ font-size:calc(25px * var(--font-scale)); line-height:1.75; color:#2A2A2A; margin:0; word-break:break-word;}
+  #modalClose{ position:absolute; top:20px; right:24px; background:none; border:none; font-size:36px; cursor:pointer; color:var(--ink-soft); width:52px; height:52px; line-height:1; }
+
+  /* ---------- 上/下時間線事件詳情彈窗（第二次點擊節點觸發） ---------- */
+  #eventModalOverlay{
+    position:absolute; inset:0; z-index:60; background:rgba(20,18,15,.35);
+    display:flex; align-items:center; justify-content:center;
+    opacity:0; pointer-events:none; transition:opacity .35s ease;
+  }
+  #eventModalOverlay.show{ opacity:1; pointer-events:auto; }
+  #eventModalCard{
+    width:760px; max-width:80%; max-height:80%; background:var(--beige); border-radius:12px;
+    padding:52px 56px 44px; box-shadow:0 48px 120px rgba(0,0,0,.4);
+    transform:translateY(32px) scale(.96); transition:transform .35s cubic-bezier(.2,.8,.2,1);
+    position:relative; overflow-y:auto; box-sizing:border-box;
+  }
+  #eventModalOverlay.show #eventModalCard{ transform:translateY(0) scale(1); }
+  #eventModalCard .myear{ font-size:calc(22px * var(--font-scale)); letter-spacing:.15em; color:var(--ink-soft); margin-bottom:8px;}
+  #eventModalCard h2{ font-family:'Noto Serif TC',serif; font-size:calc(36px * var(--font-scale)); margin:0 0 16px; line-height:1.4; word-break:break-word;}
+  #eventModalCard p{ font-size:calc(24px * var(--font-scale)); line-height:1.75; color:#2A2A2A; margin:0; word-break:break-word;}
+  #eventModalClose{ position:absolute; top:20px; right:24px; background:none; border:none; font-size:36px; cursor:pointer; color:var(--ink-soft); width:52px; height:52px; line-height:1; }
+
+</style>
+</head>
+<body>
+
+<div id="wrap">
+  <div id="stage">
+    <div id="bandTop">
+      <div id="topCatBadge">
+        <span class="dot">●</span>
+        <span class="label"></span>
+      </div>
+    </div>
+    <div id="bandBottom">
+      <div id="bottomTrackLabel">
+        <span class="label"></span>
+      </div>
+    </div>
+    <div id="threeHost"></div>
+
+    <div class="msLayer msStemLayer" id="topStemLayer"></div>
+    <div class="msLayer msStemLayer" id="bottomStemLayer"></div>
+
+    <div class="msLayer" id="topLayer"></div>
+    <div class="msLayer" id="bottomLayer"></div>
+
+    <div class="axisLayer" id="topAxisLayer">
+      <div class="axisLine"></div>
+    </div>
+    <div class="axisLayer" id="bottomAxisLayer">
+      <div class="axisLine"></div>
+    </div>
+    <div id="guideLine"></div>
+
+    <div id="headerLeft">
+      <div id="langSwitch">
+        <div class="langBtn active" data-lang="zh-Hant">繁</div>
+        <div class="langBtn" data-lang="zh-Hans">簡</div>
+        <div class="langBtn" data-lang="en">ENG</div>
+        <label id="excelImportBtn" for="excelFileInput" title="匯入 Excel 資料（上軌事件／下軌事件／照片列）">Excel</label>
+        <input type="file" id="excelFileInput" accept=".xlsx,.xls" style="display:none">
+        <button type="button" id="excelClearBtn" title="清空本機已儲存的時間軸資料" hidden>清空</button>
+      </div>
+      <div id="title">
+        <h1 id="uiTitle">樹仁校史 · 全域時間軸</h1>
+        <p id="uiSub">HONG KONG SHUE YAN UNIVERSITY · 1971–2026</p>
+      </div>
+      <div id="excelStatus"></div>
+    </div>
+
+    <div id="hint">
+      拖拽底部時間軸 / 滾動畫面瀏覽年代<br>
+      點擊照片或事件查看關聯並自動對焦
+    </div>
+
+    <div id="importHint">
+      <div class="importHintInner">
+        <strong>尚未載入資料</strong>
+        <span>請按左上角「Excel」匯入工作簿。匯入後會保存在這個瀏覽器，可隨時按「清空」刪除。</span>
+      </div>
+    </div>
+
+    <div id="yearReadout">
+      <div class="num" id="yearNum">1998</div>
+      <div class="lbl" id="uiYearLbl">CURRENT YEAR</div>
+    </div>
+
+    <div id="catButtons">
+      <div class="catBtn" data-c="A"><span class="catDot"></span><span class="catBtnLabel"></span></div>
+      <div class="catBtn" data-c="B"><span class="catDot"></span><span class="catBtnLabel"></span></div>
+      <div class="catBtn" data-c="C"><span class="catDot"></span><span class="catBtnLabel"></span></div>
+      <div class="catBtn" data-c="D"><span class="catDot"></span><span class="catBtnLabel"></span></div>
+      <div class="catBtn" data-c="E"><span class="catDot"></span><span class="catBtnLabel"></span></div>
+    </div>
+
+    <div id="fontSizeSwitch">
+      <div id="fontSizeToggle" class="fontToggleBtn">
+        <span class="aaSmall">A</span>
+        <span class="aaBig">A</span>
+      </div>
+      <div id="fontSizeMenu" class="fontSizeMenu">
+        <div class="fontSizeOption" data-size="small">小</div>
+        <div class="fontSizeOption active" data-size="medium">中</div>
+        <div class="fontSizeOption" data-size="large">大</div>
+      </div>
+    </div>
+
+    <div id="timelineBar">
+      <div id="tlTrack">
+        <div id="tlFill"></div>
+        <div id="tlThumb"></div>
+      </div>
+      <div id="tlTicks"></div>
+    </div>
+
+    <div id="modalOverlay">
+      <div id="modalCard">
+        <button id="modalClose" type="button">✕</button>
+        <img id="modalImg" alt="">
+        <img id="modalImg2" alt="" style="display:none;width:64px;height:64px;object-fit:cover;border-radius:6px;position:absolute;right:20px;top:20px;cursor:pointer;border:2px solid rgba(255,255,255,.6)">
+        <div class="myear" id="modalYear"></div>
+        <h2 id="modalTitle"></h2>
+        <p id="modalDesc"></p>
+      </div>
+    </div>
+
+    <div id="eventModalOverlay">
+      <div id="eventModalCard">
+        <button id="eventModalClose" type="button">✕</button>
+        <div class="myear" id="eventModalYear"></div>
+        <h2 id="eventModalTitle"></h2>
+        <p id="eventModalDesc"></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+
 "use strict";
 let destroyed = false;
 let animId = 0;
@@ -20,7 +587,6 @@ let animId = 0;
 let YEAR_MIN = 1971, YEAR_MAX = 2026;
 const CATS = ['A','B','C','D','E'];
 const CAT_COLORS = {A:'#B85C5F',B:'#C1A46B',C:'#7D6A8E',D:'#6B8E7A',E:'#5C6E84'};
-const CAT_LIGHT = {A:'#EDD6D4',B:'#E8D9C0',C:'#DDD4E4',D:'#D0DDD4',E:'#D0D7E0'};
 
 /* ---------------------------------------------------------
    0-img. 【本機圖片路徑設定】
@@ -33,7 +599,7 @@ const CAT_LIGHT = {A:'#EDD6D4',B:'#E8D9C0',C:'#DDD4E4',D:'#D0DDD4',E:'#D0D7E0'};
    ★ 若要更換圖片資料夾名稱或路徑，只需修改這一個常數即可，
      不需要更動程式其他部分。
    --------------------------------------------------------- */
-const IMAGE_BASE_PATH = '/images/';
+const IMAGE_BASE_PATH = 'images/';
 
 /* ---------------------------------------------------------
    0-font. 【字體／圖示縮放比例設定】
@@ -97,7 +663,6 @@ const UI_TEXT = {
 };
 
 let currentLang = 'zh-Hant';
-if(typeof document !== 'undefined') document.documentElement.lang = 'zh-Hant';
 
 /* ---------------------------------------------------------
    0a. Excel 分頁欄位架構 <-> currentLang 對應
@@ -117,11 +682,11 @@ function langKey(){ return LANG_FIELD[currentLang] || 'TC'; }
    0a-2. A–E 分類與多語言文字字典（上軌類別標籤／下軌固定標籤）
    --------------------------------------------------------- */
 const categoryMap = {
-  A: { color: '#B85C5F', light: '#EDD6D4', name: { Eng: 'Campus Development', TC: '校園發展', SC: '校园发展' } },
-  B: { color: '#C1A46B', light: '#E8D9C0', name: { Eng: 'Honours, Service and Remembrance', TC: '榮譽、服務和緬懷', SC: '荣誉、服务和缅怀' } },
-  C: { color: '#7D6A8E', light: '#DDD4E4', name: { Eng: 'Accreditation & Validation', TC: '認證與驗證', SC: '认证与验证' } },
-  D: { color: '#6B8E7A', light: '#D0DDD4', name: { Eng: 'Institutional Advancement', TC: '校務拓展', SC: '校务拓展' } },
-  E: { color: '#5C6E84', light: '#D0D7E0', name: { Eng: 'Reinventing Liberal Arts Education', TC: '重塑博雅教育', SC: '重塑博雅教育' } }
+  A: { color: '#B85C5F', name: { Eng: 'Campus Development', TC: '校園發展', SC: '校园发展' } },
+  B: { color: '#C1A46B', name: { Eng: 'Honours, Service and Remembrance', TC: '榮譽、服務和緬懷', SC: '荣誉、服务和缅怀' } },
+  C: { color: '#7D6A8E', name: { Eng: 'Accreditation & Validation', TC: '認證與驗證', SC: '认证与验证' } },
+  D: { color: '#6B8E7A', name: { Eng: 'Institutional Advancement', TC: '校務拓展', SC: '校务拓展' } },
+  E: { color: '#5C6E84', name: { Eng: 'Reinventing Liberal Arts Education', TC: '重塑博雅教育', SC: '重塑博雅教育' } }
 };
 const bottomTrackTitle = {
   Eng: 'Hong Kong Education History',
@@ -136,7 +701,6 @@ function updateCategoryBadges(){
       const info = categoryMap[activeCategory];
       badge.querySelector('.dot').style.color = info.color;
       badge.querySelector('.label').style.color = info.color;
-      badge.style.backgroundColor = info.light || 'rgba(255,255,255,.55)';
       badge.querySelector('.label').textContent = info.name[langKey()] || '';
       badge.classList.add('show');
     } else {
@@ -193,26 +757,6 @@ function parseYear(v){
   if(m) return Number(m[1]);
   const n = Number(s);
   return Number.isFinite(n) && s !== '' ? Math.trunc(n) : NaN;
-}
-// Excel year 可寫區間（2020-2026、2020–2026、2020至2026）。
-// 定位永遠用第一個年份；畫面上則顯示完整區間。
-function parseYearLabel(v, startYear){
-  if(v instanceof Date && !isNaN(v.getTime())) return String(v.getFullYear());
-  const s = String(v==null ? '' : v).trim();
-  if(!s) return Number.isFinite(startYear) ? String(Math.trunc(startYear)) : '';
-  if(/^-?\d+(\.\d+)?$/.test(s)) return String(Math.trunc(Number(s)));
-  const years = [...s.matchAll(/(\d{4})/g)].map(m => Number(m[1]));
-  if(years.length >= 2){
-    const a = years[0], b = years[years.length - 1];
-    return a === b ? String(a) : `${a}-${b}`;
-  }
-  if(years.length === 1) return String(years[0]);
-  return Number.isFinite(startYear) ? String(Math.trunc(startYear)) : s;
-}
-function yearText(item){
-  if(!item) return '';
-  if(item.yearLabel) return item.yearLabel;
-  return Number.isFinite(item.year) ? String(Math.trunc(item.year)) : '';
 }
 // relatedTopIds / relatedBottomIds 可能以「;」「；」「,」「，」「/」或多重空白分隔多個 ID；
 // 先確認欄位存在再 split，容錯處理全形/半形符號、undefined，避免 undefined.split() 造成整批解析中斷
@@ -277,12 +821,9 @@ function resolvePhoto(filename){
 }
 
 function normalizeTopRow(row){
-  const rawYear = field(row,'year');
-  const year = parseYear(rawYear);
   return {
     id: String(field(row,'id') || '').trim(),
-    year,
-    yearLabel: parseYearLabel(rawYear, year),
+    year: parseYear(field(row,'year')),
     'title-Eng': str(field(row,'title-Eng')) || '', 'title-TC': str(field(row,'title-TC')) || '', 'title-SC': str(field(row,'title-SC')) || '',
     'content-Eng': str(field(row,'content-Eng')) || '', 'content-TC': str(field(row,'content-TC')) || '', 'content-SC': str(field(row,'content-SC')) || '',
     category: str(field(row,'category')).toUpperCase(),
@@ -290,25 +831,21 @@ function normalizeTopRow(row){
   };
 }
 function normalizeBottomRow(row){
-  const rawYear = field(row,'year');
-  const year = parseYear(rawYear);
   return {
     id: String(field(row,'id') || '').trim(),
-    year,
-    yearLabel: parseYearLabel(rawYear, year),
+    year: parseYear(field(row,'year')),
     'title-Eng': str(field(row,'title-Eng')) || '', 'title-TC': str(field(row,'title-TC')) || '', 'title-SC': str(field(row,'title-SC')) || '',
     'content-Eng': str(field(row,'content-Eng')) || '', 'content-TC': str(field(row,'content-TC')) || '', 'content-SC': str(field(row,'content-SC')) || '',
     category: str(field(row,'category')).toUpperCase(),
+    // v8 新增：「下軌事件」分頁若額外填了 relatedTopIds 欄位（非必要欄位，預設為空陣列），
+    // 會與「上軌事件」分頁的 relatedBottomIds 一起在 buildDataset() 中做雙向自動補齊
     relatedTopIds: splitIds(field(row,'relatedTopIds'))
   };
 }
 function normalizePhotoRow(row){
-  const rawYear = field(row,'year');
-  const year = parseYear(rawYear);
   return {
     id: String(field(row,'id') || '').trim(),
-    year,
-    yearLabel: parseYearLabel(rawYear, year),
+    year: parseYear(field(row,'year')),
     photoSrc: resolvePhoto(field(row,'photo-1')) || resolvePhoto(field(row,'photo-2')),
     // v7 新增：photo-1 / photo-2 兩欄位都保留，供 Modal 顯示「第二張照片」縮圖使用
     photoSrc2: (resolvePhoto(field(row,'photo-1')) && resolvePhoto(field(row,'photo-2'))) ? resolvePhoto(field(row,'photo-2')) : null,
@@ -465,9 +1002,9 @@ function photoDetail(idx){
   const rel = [...relTop, ...relBottom];
   const ownContent = L(p, 'content');
   const desc = ownContent || (rel.length
-    ? `此影像與「${rel[0]}」等 ${rel.length} 項事件相關，記錄了 ${yearText(p)} 年前後樹仁校園與社會的一段片刻。`
-    : `${yearText(p)} 年的校園片刻，靜靜存放在時光鏈之中。`);
-  return { title: L(p,'title'), desc, year: p.year, yearLabel: yearText(p), photoSrc: p.photoSrc, photoSrc2: p.photoSrc2 };
+    ? `此影像與「${rel[0]}」等 ${rel.length} 項事件相關，記錄了 ${Math.floor(p.year)} 年前後樹仁校園與社會的一段片刻。`
+    : `${Math.floor(p.year)} 年的校園片刻，靜靜存放在時光鏈之中。`);
+  return { title: L(p,'title'), desc, year: p.year, photoSrc: p.photoSrc, photoSrc2: p.photoSrc2 };
 }
 
 /* =========================================================
@@ -692,16 +1229,9 @@ const meshes = [];
 
 // 清空並釋放既有的相片 mesh（Excel 重新匯入時使用），避免記憶體洩漏與殘影
 function disposePhotoMeshes(){
-  stopPhotoSwap();
   meshes.forEach(m => {
     chainGroup.remove(m.holder);
-    m.mesh.geometry.dispose();
-    if(m.textures){
-      m.textures.forEach(t => { if(t) t.dispose(); });
-    } else {
-      m.mesh.material.map && m.mesh.material.map.dispose();
-    }
-    m.mesh.material.dispose();
+    m.mesh.geometry.dispose(); m.mesh.material.map && m.mesh.material.map.dispose(); m.mesh.material.dispose();
     m.frame.geometry.dispose(); m.frame.material.dispose();
   });
   meshes.length = 0;
@@ -738,36 +1268,6 @@ function computePhotoClusterOffsets(){
     });
   });
   return offsetByIndex;
-}
-
-const PHOTO_SWAP_MS = 3000;
-let photoSwapTimer = null;
-
-function applyMeshFace(m){
-  if(!m || !m.textures) return;
-  const tex = m.textures[m.face || 0] || m.textures[0];
-  if(!tex) return;
-  m.mesh.material.map = tex;
-  m.mesh.material.color.setHex(0xffffff);
-  m.mesh.material.needsUpdate = true;
-}
-
-function tickPhotoSwap(){
-  meshes.forEach(m => {
-    if(!m.textures || !m.textures[0] || !m.textures[1]) return;
-    if(m.index === expandedPhotoIndex) return;
-    m.face = m.face ? 0 : 1;
-    applyMeshFace(m);
-  });
-}
-
-function startPhotoSwap(){
-  stopPhotoSwap();
-  photoSwapTimer = setInterval(tickPhotoSwap, PHOTO_SWAP_MS);
-}
-
-function stopPhotoSwap(){
-  if(photoSwapTimer){ clearInterval(photoSwapTimer); photoSwapTimer = null; }
 }
 
 // 依目前 photosData 建立相片鏈 mesh；photoSrc 為 null（照片欄位空白或無效）時，
@@ -827,47 +1327,35 @@ function buildPhotoMeshes(){
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.userData.photoIndex = p.index;
+    if(p.photoSrc){
+      loadPhotoTexture(
+        p.photoSrc,
+        (texture) => {
+          mat.map = texture;
+          // 貼圖成功後把材質底色改回純白，避免 PLACEHOLDER_COLOR 以
+          // 「材質色 × 貼圖顏色」的方式疊加，讓照片出現偏色／變暗的情況。
+          mat.color.setHex(0xffffff);
+          mat.needsUpdate = true;
+        },
+        () => { /* 載入失敗：保留 PLACEHOLDER_COLOR 底色，不強行顯示破圖 */ }
+      );
+    }
 
     const holder = new THREE.Group();
     holder.add(frame); holder.add(mesh);
     chainGroup.add(holder);
 
-    const textures = [null, null];
-    const mRef = {
+    meshes.push({
       holder, mesh, frame, index:p.index, vx, year:p.year,
       clusterOffsetX: clusterLayout.offsetX, clusterOffsetY: clusterLayout.offsetY,
       clusterHalfWidth: clusterLayout.clusterHalfWidth || 0,
-      baseY: BASE_Y, extraShift:0, catFilteredOut:false, elevateOffset:0, elevated:false,
-      textures, face: 0
-    };
-    if(p.photoSrc){
-      loadPhotoTexture(
-        p.photoSrc,
-        (texture) => {
-          textures[0] = texture;
-          if((mRef.face || 0) === 0) applyMeshFace(mRef);
-        },
-        () => { /* 載入失敗：保留 PLACEHOLDER_COLOR 底色，不強行顯示破圖 */ }
-      );
-    }
-    if(p.photoSrc2){
-      loadPhotoTexture(
-        p.photoSrc2,
-        (texture) => {
-          textures[1] = texture;
-          if(mRef.face === 1) applyMeshFace(mRef);
-        }
-      );
-    }
-    meshes.push(mRef);
+      baseY: BASE_Y, extraShift:0, catFilteredOut:false, elevateOffset:0, elevated:false
+    });
   });
-  startPhotoSwap();
 }
 buildPhotoMeshes();
 
 let expandedPhotoIndex = null;
-let modalSrcs = [];
-let modalFace = 0;
 
 // v14-7 修改：取消連續的高斯波浪弧度，改成「只有目前對焦的年份整批彈起，
 // 其餘年份一律固定在基準水平線」的二選一效果——之前 gauss 是連續函數，
@@ -1093,18 +1581,9 @@ window.addEventListener('pointerup', onWinPointerUp);
 function onKeyDown(e){
   const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
   if(tag === 'input' || tag === 'textarea') return;
-  if(e.key === 'Escape'){ resetSelection(); return; }
-  if(e.key === 'ArrowLeft' || e.key === 'ArrowRight'){
-    if(document.getElementById('modalOverlay').classList.contains('show') && modalSrcs.length > 1){
-      e.preventDefault();
-      stepModalFace(e.key === 'ArrowLeft' ? -1 : 1);
-      return;
-    }
-    const dir = e.key === 'ArrowLeft' ? -180 : 180;
-    targetFocusPx = clamp(targetFocusPx + dir, 0, TOTAL_VIRTUAL_W);
-    resetHintTimer();
-    clearPhotoPickMemory();
-  }
+  if(e.key === 'ArrowLeft'){ targetFocusPx = clamp(targetFocusPx - 180, 0, TOTAL_VIRTUAL_W); resetHintTimer(); clearPhotoPickMemory(); }
+  if(e.key === 'ArrowRight'){ targetFocusPx = clamp(targetFocusPx + 180, 0, TOTAL_VIRTUAL_W); resetHintTimer(); clearPhotoPickMemory(); }
+  if(e.key === 'Escape'){ resetSelection(); }
 }
 window.addEventListener('keydown', onKeyDown);
 
@@ -1251,9 +1730,10 @@ const TOP_LANE_COUNT = 3;
 const BOTTOM_LANE_COUNT = 3;
 function fontScaleNow(){ return FONT_SCALES[currentFontSize] || 1; }
 function yearLabelClearance(){
-  // Must match CSS .axisTickYear offset (44 + 30*fs) plus larger numeral height + a gap
+  // Must match CSS .axisTickYear offset (44 + 30*fs) plus numeral height + a gap
+  // so event cards never sit on top of the axis year labels.
   const fs = fontScaleNow();
-  return 62 + 56 * fs;
+  return 58 + 52 * fs;
 }
 function headerReservePx(){
   const el = document.getElementById('headerLeft');
@@ -1418,7 +1898,7 @@ function buildMilestoneDOM(){
     el.dataset.id = m.id; el.dataset.cat = m.category;
     const title = L(m,'title');
     el.title = title;
-    const yrHtml = `<div class="yr">${escapeHtml(yearText(m))}</div>`;
+    const yrHtml = `<div class="yr">${m.year}</div>`;
     const lblHtml = `<div class="lbl">${escapeHtml(title)}</div>`;
     // Year sits on the OUTER side (away from the axis) so it never hugs the line.
     // Dot sits on the INNER side so the stem attaches next to the timeline.
@@ -1624,9 +2104,7 @@ function updateGuideLine(){
    ========================================================= */
 let activeCategory = null;
 const bandTop = document.getElementById('bandTop');
-const bandMid = document.getElementById('bandMid');
 const DEFAULT_TOP_BG = '#F4F1EA';
-const DEFAULT_MID_BG = '#F4F1EA';
 
 /* 顏色輔助：分類淡化背景（與3.文字自動對比色（4.） */
 function hexToRgb(hex){
@@ -1657,22 +2135,6 @@ function updateTopTextContrast(bgHex){
   const textColor = lum < 0.5 ? '#F4F1EA' : '#1D1D1F';
   document.documentElement.style.setProperty('--top-text-color', textColor);
 }
-function applyCategoryBands(cat){
-  if(!cat){
-    bandTop.style.backgroundColor = DEFAULT_TOP_BG;
-    if(bandMid) bandMid.style.backgroundColor = DEFAULT_MID_BG;
-    updateTopTextContrast(DEFAULT_TOP_BG);
-    document.documentElement.style.setProperty('--year-readout-color', '');
-    return;
-  }
-  const light = CAT_LIGHT[cat] || CAT_COLORS[cat];
-  const topBg = blendHex(light, DEFAULT_TOP_BG, 0.82);
-  const midBg = blendHex(light, DEFAULT_MID_BG, 0.42);
-  bandTop.style.backgroundColor = topBg;
-  if(bandMid) bandMid.style.backgroundColor = midBg;
-  updateTopTextContrast(topBg);
-  document.documentElement.style.setProperty('--year-readout-color', CAT_COLORS[cat] || '');
-}
 updateTopTextContrast(DEFAULT_TOP_BG);
 
 // v8 強化：照片分類判定 —— 優先採用照片自身的 category 欄位；
@@ -1688,14 +2150,18 @@ document.querySelectorAll('.catBtn').forEach(btn => {
     const c = btn.dataset.c;
     if(activeCategory === c){
       activeCategory = null;
-      applyCategoryBands(null);
+      bandTop.style.backgroundColor = DEFAULT_TOP_BG;
+      updateTopTextContrast(DEFAULT_TOP_BG);
       document.querySelectorAll('.catBtn').forEach(b=>b.classList.remove('on'));
       topMilestones.forEach(m => topEls[m.id].classList.remove('hidden'));
       // 下軌事件（歷史 background/context）永遠顯示，不受分類篩選影響，故不處理 hidden
       meshes.forEach(m => { m.catFilteredOut = false; m.holder.visible = true; });
     } else {
       activeCategory = c;
-      applyCategoryBands(c);
+      // 淡化背景：僅混入約 15% 的分類色（等同 rgba(色, 0.15) 疊在底色上），避免過深過硬
+      const dilutedBg = blendHex(CAT_COLORS[c], DEFAULT_TOP_BG, 0.15);
+      bandTop.style.backgroundColor = dilutedBg;
+      updateTopTextContrast(dilutedBg);
       document.querySelectorAll('.catBtn').forEach(b=>b.classList.toggle('on', b.dataset.c===c));
       // 分類按鈕只對「上軌事件」與「照片列」進行類別過濾；
       // 「下軌事件」為歷史 background/context，不論切換到哪個分類，永遠保持顯示（Never Hidden）。
@@ -1721,7 +2187,6 @@ document.querySelectorAll('.langBtn').forEach(btn => {
   btn.addEventListener('click', () => {
     const lang = btn.dataset.lang;
     currentLang = lang;
-    document.documentElement.lang = lang === 'en' ? 'en' : (lang === 'zh-Hans' ? 'zh-Hans' : 'zh-Hant');
     document.querySelectorAll('.langBtn').forEach(b => b.classList.toggle('active', b.dataset.lang === lang));
     
     const txt = UI_TEXT[lang];
@@ -1761,7 +2226,7 @@ function refreshLangTexts(){
   }
   if(document.getElementById('modalOverlay').classList.contains('show') && expandedPhotoIndex!==null){
     const detail = photoDetail(expandedPhotoIndex);
-    document.getElementById('modalYear').textContent = detail.yearLabel || yearText(detail);
+    document.getElementById('modalYear').textContent = Math.floor(detail.year);
     document.getElementById('modalTitle').textContent = detail.title;
     document.getElementById('modalDesc').textContent = detail.desc;
   }
@@ -1908,24 +2373,24 @@ function eventDetail(source, id){
     const photoCount = m.relatedPhotoIds.length;
     const ownContent = L(m, 'content');
     const desc = ownContent || (relBottom.length
-      ? `${yearText(m)} 年，「${L(m,'title')}」發生，與「${relBottom[0]}」等 ${relBottom.length} 項下軌時代背景相關，並留有 ${photoCount} 張關聯影像記錄。`
-      : `${yearText(m)} 年，「${L(m,'title')}」發生，留有 ${photoCount} 張關聯影像記錄。`);
-    return { title: L(m,'title'), year: m.year, yearLabel: yearText(m), desc };
+      ? `${Math.floor(m.year)} 年，「${L(m,'title')}」發生，與「${relBottom[0]}」等 ${relBottom.length} 項下軌時代背景相關，並留有 ${photoCount} 張關聯影像記錄。`
+      : `${Math.floor(m.year)} 年，「${L(m,'title')}」發生，留有 ${photoCount} 張關聯影像記錄。`);
+    return { title: L(m,'title'), year: m.year, desc };
   } else {
     const m = bottomById[id];
     const relTop = m.relatedTopIds.map(tid => topById[tid]).filter(Boolean).map(t => L(t,'title'));
     const photoCount = m.relatedPhotoIds.length;
     const ownContent = L(m, 'content');
     const desc = ownContent || (relTop.length
-      ? `${yearText(m)} 年，「${L(m,'title')}」為當時的社會／教育背景，與「${relTop[0]}」等 ${relTop.length} 項校史事件相關，並留有 ${photoCount} 張關聯影像記錄。`
-      : `${yearText(m)} 年，「${L(m,'title')}」為當時的社會／教育背景，留有 ${photoCount} 張關聯影像記錄。`);
-    return { title: L(m,'title'), year: m.year, yearLabel: yearText(m), desc };
+      ? `${Math.floor(m.year)} 年，「${L(m,'title')}」為當時的社會／教育背景，與「${relTop[0]}」等 ${relTop.length} 項校史事件相關，並留有 ${photoCount} 張關聯影像記錄。`
+      : `${Math.floor(m.year)} 年，「${L(m,'title')}」為當時的社會／教育背景，留有 ${photoCount} 張關聯影像記錄。`);
+    return { title: L(m,'title'), year: m.year, desc };
   }
 }
 
 function openEventModal(source, id){
   const detail = eventDetail(source, id);
-  document.getElementById('eventModalYear').textContent = detail.yearLabel || yearText(detail);
+  document.getElementById('eventModalYear').textContent = Math.floor(detail.year);
   document.getElementById('eventModalTitle').textContent = detail.title;
   document.getElementById('eventModalDesc').textContent = detail.desc;
   document.getElementById('eventModalOverlay').classList.add('show');
@@ -2146,52 +2611,38 @@ function expandPhoto(idx){
   gsap.to(m.holder.scale, { x:1.8, y:1.8, duration:.5, ease:'power3.out' });
 
   const detail = photoDetail(idx);
-  modalSrcs = [detail.photoSrc, detail.photoSrc2].filter(Boolean);
-  modalFace = (m && m.face) ? 1 : 0;
-  if(modalFace >= modalSrcs.length) modalFace = 0;
-  renderModalImage();
-  document.getElementById('modalYear').textContent = detail.yearLabel || yearText(detail);
-  document.getElementById('modalTitle').textContent = detail.title;
-  document.getElementById('modalDesc').textContent = detail.desc;
-  document.getElementById('modalOverlay').classList.add('show');
-}
-
-function renderModalImage(){
   const modalImg = document.getElementById('modalImg');
-  const wrap = document.getElementById('modalImgWrap');
-  const countEl = document.getElementById('modalPhotoCount');
-  const src = modalSrcs[modalFace];
-  if(src){
+  // 照片欄位空白／檔名無效／載入失敗時，一律隱藏 <img>，避免顯示破圖圖示
+  if(detail.photoSrc){
     modalImg.onerror = () => { modalImg.style.display = 'none'; };
-    modalImg.src = src.includes('picsum.photos') ? src.replace('/800/600','/1200/900') : src;
+    modalImg.src = detail.photoSrc.includes('picsum.photos') ? detail.photoSrc.replace('/800/600','/1200/900') : detail.photoSrc;
     modalImg.style.display = '';
   } else {
     modalImg.onerror = null;
     modalImg.removeAttribute('src');
     modalImg.style.display = 'none';
   }
-  if(wrap) wrap.classList.toggle('has-dual', modalSrcs.length > 1);
-  if(countEl) countEl.textContent = modalSrcs.length > 1 ? `${modalFace + 1} / ${modalSrcs.length}` : '';
-}
-
-function stepModalFace(dir){
-  if(modalSrcs.length < 2) return;
-  modalFace = (modalFace + dir + modalSrcs.length) % modalSrcs.length;
-  renderModalImage();
-  if(expandedPhotoIndex !== null && meshes[expandedPhotoIndex]){
-    meshes[expandedPhotoIndex].face = modalFace;
-    applyMeshFace(meshes[expandedPhotoIndex]);
+  // v7 新增：Excel photo-2 欄位的第二張照片，顯示為右上角小縮圖，點擊可與主圖互換
+  const modalImg2 = document.getElementById('modalImg2');
+  if(detail.photoSrc2){
+    modalImg2.onerror = () => { modalImg2.style.display = 'none'; };
+    modalImg2.src = detail.photoSrc2;
+    modalImg2.style.display = 'block';
+    modalImg2.onclick = () => {
+      const swap = modalImg.src;
+      modalImg.src = modalImg2.src;
+      modalImg2.src = swap;
+    };
+  } else {
+    modalImg2.onerror = null;
+    modalImg2.removeAttribute('src');
+    modalImg2.style.display = 'none';
   }
+  document.getElementById('modalYear').textContent = Math.floor(detail.year);
+  document.getElementById('modalTitle').textContent = detail.title;
+  document.getElementById('modalDesc').textContent = detail.desc;
+  document.getElementById('modalOverlay').classList.add('show');
 }
-
-document.getElementById('modalPrev').addEventListener('click', (e) => {
-  e.stopPropagation();
-  stepModalFace(-1);
-});
-document.getElementById('modalNext').addEventListener('click', (e) => {
-  e.stopPropagation();
-  stepModalFace(1);
-});
 
 function collapsePhoto(skipModalClose){
   // v14-18：關閉彈窗這一步必須放在最前面、不受 expandedPhotoIndex 影響。
@@ -2199,13 +2650,7 @@ function collapsePhoto(skipModalClose){
   // 狀態一旦不同步（彈窗還開著、但 expandedPhotoIndex 已經是 null），
   // collapsePhoto() 就會直接 return、彈窗永遠關不掉——之後不論點哪裡都
   // 沒有任何反應，變成一個完全卡死的死區。
-  if(!skipModalClose){
-    document.getElementById('modalOverlay').classList.remove('show');
-    const wrap = document.getElementById('modalImgWrap');
-    if(wrap) wrap.classList.remove('has-dual');
-    modalSrcs = [];
-    modalFace = 0;
-  }
+  if(!skipModalClose) document.getElementById('modalOverlay').classList.remove('show');
   if(expandedPhotoIndex===null) return;
   const idx = expandedPhotoIndex;
   const m = meshes[idx];
@@ -2315,7 +2760,7 @@ function bindOverlayClick(overlayEl, ignoreSelector, cardSelector){
   });
 }
 
-bindOverlayClick(document.getElementById('modalOverlay'), '#modalClose,#modalPrev,#modalNext,#modalPhotoCount', '#modalCard');
+bindOverlayClick(document.getElementById('modalOverlay'), '#modalClose,#modalImg2', '#modalCard');
 bindOverlayClick(document.getElementById('eventModalOverlay'), '#eventModalClose', '#eventModalCard');
 
 /* ---------------------------------------------------------
@@ -2340,7 +2785,6 @@ const BACKGROUND_CLICK_IGNORE_SELECTOR = [
   '.fontSizeOption',      // 字體大小選單選項
   '#modalCard',           // 照片詳情彈窗本體
   '#eventModalCard',      // 事件詳情彈窗本體
-  '.modalNav',
   '#modalOverlay',        // 照片彈窗背景（已有自己的關閉/清空邏輯）
   '#eventModalOverlay',   // 事件彈窗背景（已有自己的關閉邏輯）
   '#timelineBar',         // 底部時間軸拖拽列（含 tlTrack/tlThumb/tlTicks）
@@ -2438,7 +2882,8 @@ function rebuildTimeline(ds){
   buildMilestoneDOM();
 
   activeCategory = null;
-  applyCategoryBands(null);
+  bandTop.style.backgroundColor = DEFAULT_TOP_BG;
+  updateTopTextContrast(DEFAULT_TOP_BG);
   document.querySelectorAll('.catBtn').forEach(b => b.classList.remove('on'));
   updateCategoryBadges();
   updateCategoryButtonLabels();
@@ -2583,25 +3028,6 @@ function animate(){
 
   animate();
 
-
-  function destroy(){
-    destroyed = true;
-    cancelAnimationFrame(animId);
-    stopPhotoSwap();
-    try { disposePhotoMeshes(); } catch (e) { /* ignore */ }
-    try {
-      renderer.dispose();
-      if(renderer.domElement && renderer.domElement.parentNode){
-        renderer.domElement.parentNode.removeChild(renderer.domElement);
-      }
-    } catch (e) { /* ignore */ }
-    window.removeEventListener('pointermove', onWinPointerMove);
-    window.removeEventListener('pointerup', onWinPointerUp);
-    window.removeEventListener('pointermove', onThumbPointerMove);
-    window.removeEventListener('pointerup', onThumbPointerUp);
-    window.removeEventListener('resize', onResize);
-    window.removeEventListener('orientationchange', onResize);
-    window.removeEventListener('keydown', onKeyDown);
-  }
-  return destroy;
-}
+</script>
+</body>
+</html>

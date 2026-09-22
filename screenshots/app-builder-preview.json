@@ -6,10 +6,10 @@
       "height": 800,
       "status": 200,
       "title": "樹仁校史 · HKSYU History Timeline",
-      "hasCanvas": false,
-      "bodyTextLen": 147,
-      "bodyTextHash": "fc40cb55b145547627ebdb0b88f5856a8839a4fe3813a4fee49cbfac5664c4a4",
-      "bodyTextPrefix": "繁 簡 ENG Excel 樹仁校史 · 全域時間軸 HONG KONG SHUE YAN UNIVERSITY · 1971–",
+      "hasCanvas": true,
+      "bodyTextLen": 405,
+      "bodyTextHash": "400d23845682932fac054329a5435674cef1f83236d7402ded5344eec85f7ec4",
+      "bodyTextPrefix": "香港教育歷史 1971 1976 1981 1986 1991 1996 2001 2006 2011 2016 2021 20",
       "horizontalOverflow": false,
       "consoleErrors": [],
       "pageErrors": [],
@@ -20,17 +20,20 @@
       "height": 844,
       "status": 200,
       "title": "樹仁校史 · HKSYU History Timeline",
-      "hasCanvas": false,
-      "bodyTextLen": 147,
-      "bodyTextHash": "fc40cb55b145547627ebdb0b88f5856a8839a4fe3813a4fee49cbfac5664c4a4",
-      "bodyTextPrefix": "繁 簡 ENG Excel 樹仁校史 · 全域時間軸 HONG KONG SHUE YAN UNIVERSITY · 1971–",
+      "hasCanvas": true,
+      "bodyTextLen": 365,
+      "bodyTextHash": "c57f130a0d145e88e475400a3714bec261617da3aa6e13cfefcde7537ad703dd",
+      "bodyTextPrefix": "香港教育歷史 1971 1976 1981 1986 1991 1996 2001 2006 2011 2016 2021 20",
       "horizontalOverflow": false,
       "consoleErrors": [],
       "pageErrors": [],
       "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
     }
   },
-  "brandWarnings": [],
+  "brandWarnings": [
+    "BRAND WARNING: this looks like a game/canvas app but src/lib/og/site.json is missing \"type\": \"x:game\". X uses og:type=x:game to present the unfurl as a game card — set it in /workspace/src/lib/og/site.json per /workspace/.grok/skills/og/SKILL.md. Do not invent x:type or overload twitter:card as the game signal.",
+    "BRAND WARNING: this looks like a game/canvas app but /workspace/public/x-banner.jpg is missing. Games need a 50:11 X feed card (1200×264 JPEG) at public/x-banner.jpg — open /workspace/.grok/skills/og/SKILL.md and finish the brand-asset pass."
+  ],
   "authWarnings": [],
   "verdictFile": "/workspace/screenshots/app-builder-preview.json"
 }
